@@ -48,6 +48,18 @@ const Popup: React.FC = () => {
     setupResizeHandle();
   }, []);
 
+  // Separate useEffect for auto-summarization that waits for currentTab and settings to be loaded
+  useEffect(() => {
+    if (currentTab && settings.apiKey && !summary && !error && !isLoading) {
+      // Auto-summarize when popup opens and currentTab is available
+      const timer = setTimeout(() => {
+        summarizeCurrentPage();
+      }, 300);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [currentTab, settings.apiKey]);
+
   const loadSettings = async () => {
     try {
       const result = await chrome.storage.local.get(['settings']);
@@ -71,24 +83,65 @@ const Popup: React.FC = () => {
 
   const loadCurrentTab = async () => {
     try {
-      const windows = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] });
+      // Try multiple approaches to find the active tab
       let activeTab = null;
       
-      const normalWindows = windows
-        .filter(w => w.type === 'normal')
-        .sort((a, b) => (b.focused ? 1 : 0) - (a.focused ? 1 : 0));
-        
-      if (normalWindows.length > 0) {
-        const focusedWindow = normalWindows[0];
-        activeTab = focusedWindow.tabs?.find(tab => tab.active);
+      // First try: Get active tab from the current window
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab && tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')) {
+          activeTab = tab;
+        }
+      } catch (e) {
+        console.log('Method 1 failed:', e);
       }
       
+      // Second try: Get active tab from any normal window
       if (!activeTab) {
-        const [tab] = await chrome.tabs.query({ active: true, windowType: 'normal' });
-        activeTab = tab;
+        try {
+          const [tab] = await chrome.tabs.query({ active: true, windowType: 'normal' });
+          if (tab && tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')) {
+            activeTab = tab;
+          }
+        } catch (e) {
+          console.log('Method 2 failed:', e);
+        }
       }
       
-      setCurrentTab(activeTab);
+      // Third try: Get the last active tab from normal windows
+      if (!activeTab) {
+        try {
+          const windows = await chrome.windows.getAll({ populate: true, windowTypes: ['normal'] });
+          for (const window of windows) {
+            if (window.tabs) {
+              const tab = window.tabs.find(t => t.active && t.url && 
+                !t.url.startsWith('chrome://') && !t.url.startsWith('chrome-extension://'));
+              if (tab) {
+                activeTab = tab;
+                break;
+              }
+            }
+          }
+        } catch (e) {
+          console.log('Method 3 failed:', e);
+        }
+      }
+      
+      // Fourth try: Get any valid tab if still no active tab found
+      if (!activeTab) {
+        try {
+          const tabs = await chrome.tabs.query({});
+          activeTab = tabs.find(tab => tab.url && 
+            !tab.url.startsWith('chrome://') && 
+            !tab.url.startsWith('chrome-extension://') &&
+            !tab.url.startsWith('moz-extension://'));
+        } catch (e) {
+          console.log('Method 4 failed:', e);
+        }
+      }
+      
+      console.log('Active tab found:', activeTab);
+      setCurrentTab(activeTab || null);
     } catch (error) {
       console.error('Error loading current tab:', error);
     }
@@ -104,13 +157,26 @@ const Popup: React.FC = () => {
   };
 
   const summarizeCurrentPage = async () => {
+    // Refresh current tab info before attempting summarization
+    await loadCurrentTab();
+    
     if (!currentTab || !currentTab.id) {
-      setError('No active tab found');
+      setError('No suitable tab found. Please navigate to a webpage and try again.');
+      return;
+    }
+
+    // Check if the tab URL is valid for summarization
+    if (!currentTab.url || 
+        currentTab.url.startsWith('chrome://') || 
+        currentTab.url.startsWith('chrome-extension://') ||
+        currentTab.url.startsWith('moz-extension://')) {
+      setError('Cannot summarize this page. Please navigate to a regular webpage.');
       return;
     }
 
     if (!settings.apiKey) {
       setError('Please configure your API key in Settings');
+      setActiveTab('settings'); // Switch to settings tab
       return;
     }
 
@@ -125,7 +191,11 @@ const Popup: React.FC = () => {
       });
 
       if (!response || response.length === 0) {
-        throw new Error('Could not extract text from the page');
+        throw new Error('Could not extract text from the page. The page might be empty or blocked.');
+      }
+
+      if (response.length < 50) {
+        throw new Error('Page content is too short to summarize meaningfully.');
       }
 
       const llmResponse = await chrome.runtime.sendMessage({
@@ -391,7 +461,7 @@ const Popup: React.FC = () => {
                   {isLoading ? (
                     <>
                       <span className="inline-block animate-spin mr-2">⟳</span>
-                      Summarizing...
+                      Auto-summarizing...
                     </>
                   ) : (
                     'Summarize Page'
