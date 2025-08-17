@@ -166,6 +166,7 @@ npm run clean
 - **chat interface** implement add chat interface
 - **iterate through pages and summarize discussion** reading through all comments 
 - **agentic flow** make sure page click through the end, or scoll to the full content
+- **keep it alive** have background thread running even if lose focus
 
 ## Contributing
 
