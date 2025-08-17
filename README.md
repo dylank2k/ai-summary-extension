@@ -158,7 +158,7 @@ npm run clean
 ## Wishlist
 - **Better Caching** make caching expire with dynamic detection
 - **No API key use** figure out how to do summary without API keys
-- **get the summary right away** do not wait for user to click the button, just start fetching the summary
+- [x]**get the summary right away** do not wait for user to click the button, just start fetching the summary
 - **configurable key and model** make model selection and secrets managed by some other tooling instead of browser local storage
 - **model and version selection** want to use other models?
 

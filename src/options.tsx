@@ -416,6 +416,70 @@ const Options: React.FC = () => {
         )}
       </form>
 
+      {/* Updates Section */}
+      <div className="bg-gray-50 p-6 rounded-lg">
+        <h2 className="text-xl font-semibold text-gray-900 mb-4">Recent Updates</h2>
+        
+        <div className="space-y-6">
+          {/* August 17, 2025 */}
+          <div className="border-l-4 border-blue-500 pl-4">
+            <h3 className="text-lg font-medium text-gray-900 mb-2">August 17, 2025</h3>
+            <div className="space-y-2 text-sm text-gray-700">
+              <div className="flex items-start gap-2">
+                <span className="w-2 h-2 bg-green-500 rounded-full mt-2 flex-shrink-0"></span>
+                <span><strong>Cache Configuration:</strong> Added user-configurable cache size limit and expiry days in options page</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="w-2 h-2 bg-blue-500 rounded-full mt-2 flex-shrink-0"></span>
+                <span><strong>Unified Cache Button:</strong> Consolidated cache status and summarize button with color coding (green for cached, blue for fresh)</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="w-2 h-2 bg-purple-500 rounded-full mt-2 flex-shrink-0"></span>
+                <span><strong>Options Page:</strong> Added dedicated full-page options interface with comprehensive settings</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="w-2 h-2 bg-orange-500 rounded-full mt-2 flex-shrink-0"></span>
+                <span><strong>Interface Cleanup:</strong> Removed resize functionality, cleaned up legacy CSS files, simplified popup navigation</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="w-2 h-2 bg-red-500 rounded-full mt-2 flex-shrink-0"></span>
+                <span><strong>Layout Improvements:</strong> Doubled popup width to 800px, fixed horizontal scrollbar issues using Tailwind</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="w-2 h-2 bg-teal-500 rounded-full mt-2 flex-shrink-0"></span>
+                <span><strong>Auto-summarization:</strong> Added automatic summarization when plugin opens with proper timing fixes</span>
+              </div>
+            </div>
+          </div>
+
+          {/* August 16, 2025 */}
+          <div className="border-l-4 border-gray-400 pl-4">
+            <h3 className="text-lg font-medium text-gray-900 mb-2">August 16, 2025</h3>
+            <div className="space-y-2 text-sm text-gray-700">
+              <div className="flex items-start gap-2">
+                <span className="w-2 h-2 bg-gray-500 rounded-full mt-2 flex-shrink-0"></span>
+                <span><strong>Foundation:</strong> Core extension architecture with React, Tailwind, and cache system</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="w-2 h-2 bg-gray-500 rounded-full mt-2 flex-shrink-0"></span>
+                <span><strong>AI Integration:</strong> Claude and OpenAI API support with intelligent caching</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="w-2 h-2 bg-gray-500 rounded-full mt-2 flex-shrink-0"></span>
+                <span><strong>Multi-language:</strong> Chinese and English summarization support</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-6 pt-4 border-t border-gray-200">
+          <div className="flex items-center justify-between text-sm text-gray-500">
+            <span>Latest version: v1.0.0</span>
+            <span>Built with React + Tailwind CSS</span>
+          </div>
+        </div>
+      </div>
+
       {/* Footer */}
       <div className="mt-12 pt-8 border-t border-gray-200 text-center text-gray-500 text-sm">
         <p>AI Page Summarizer Extension v1.0.0</p>
