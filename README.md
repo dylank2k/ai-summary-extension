@@ -161,6 +161,11 @@ npm run clean
 - [x]**get the summary right away** do not wait for user to click the button, just start fetching the summary
 - **configurable key and model** make model selection and secrets managed by some other tooling instead of browser local storage
 - **model and version selection** want to use other models?
+- **implement openrouter** implement open router interface
+- **read pdf** adding reading from pdf functionality
+- **chat interface** implement add chat interface
+- **iterate through pages and summarize discussion** reading through all comments 
+- **agentic flow** make sure page click through the end, or scoll to the full content
 
 ## Contributing
 
