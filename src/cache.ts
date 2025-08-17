@@ -14,8 +14,25 @@ interface CacheStorage {
 
 export class SummaryCache {
   private static readonly STORAGE_KEY = 'summary_cache';
-  private static readonly MAX_CACHE_SIZE = 100; // Maximum number of cached entries
-  private static readonly CACHE_EXPIRY_DAYS = 1; // Cache expires after 7 days
+  private static readonly DEFAULT_MAX_CACHE_SIZE = 100; // Default maximum number of cached entries
+  private static readonly DEFAULT_CACHE_EXPIRY_DAYS = 1; // Default cache expiry in days
+
+  private static async getSettings(): Promise<{ cacheMaxSize: number; cacheExpiryDays: number }> {
+    try {
+      const result = await chrome.storage.local.get(['settings']);
+      const settings = result.settings || {};
+      return {
+        cacheMaxSize: settings.cacheMaxSize || this.DEFAULT_MAX_CACHE_SIZE,
+        cacheExpiryDays: settings.cacheExpiryDays || this.DEFAULT_CACHE_EXPIRY_DAYS
+      };
+    } catch (error) {
+      console.error('Error loading cache settings:', error);
+      return {
+        cacheMaxSize: this.DEFAULT_MAX_CACHE_SIZE,
+        cacheExpiryDays: this.DEFAULT_CACHE_EXPIRY_DAYS
+      };
+    }
+  }
 
   /**
    * Create cache key from URL and language
@@ -47,8 +64,9 @@ export class SummaryCache {
       }
 
       // Check if cache entry has expired
+      const { cacheExpiryDays } = await this.getSettings();
       const now = Date.now();
-      const expiryTime = entry.timestamp + (this.CACHE_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
+      const expiryTime = entry.timestamp + (cacheExpiryDays * 24 * 60 * 60 * 1000);
 
       if (now > expiryTime) {
         // Entry expired, remove it
@@ -86,11 +104,12 @@ export class SummaryCache {
       };
 
       // Check cache size and remove oldest entries if needed
+      const { cacheMaxSize } = await this.getSettings();
       const entries = Object.values(cache);
-      if (entries.length > this.MAX_CACHE_SIZE) {
+      if (entries.length > cacheMaxSize) {
         // Sort by timestamp and remove oldest entries
         entries.sort((a, b) => a.timestamp - b.timestamp);
-        const entriesToRemove = entries.slice(0, entries.length - this.MAX_CACHE_SIZE);
+        const entriesToRemove = entries.slice(0, entries.length - cacheMaxSize);
 
         entriesToRemove.forEach(entry => {
           const entryKey = this.createCacheKey(entry.url, entry.language);
@@ -139,7 +158,14 @@ export class SummaryCache {
    * Get cache statistics
    * @returns Object with cache size and other stats
    */
-  static async getStats(): Promise<{ size: number; oldestEntry?: string; newestEntry?: string }> {
+  static async getStats(): Promise<{ 
+    size: number; 
+    totalBytes: number;
+    totalSizeFormatted: string;
+    oldestEntry?: string; 
+    newestEntry?: string;
+    entries: Array<{url: string; language: string; timestamp: string; model: string; sizeBytes: number}>;
+  }> {
     try {
       const result = await chrome.storage.local.get([this.STORAGE_KEY]);
       const cache: CacheStorage = result[this.STORAGE_KEY] || {};
@@ -148,18 +174,67 @@ export class SummaryCache {
       const size = entries.length;
 
       if (size === 0) {
-        return { size: 0 };
+        return { 
+          size: 0, 
+          totalBytes: 0,
+          totalSizeFormatted: '0 B',
+          entries: []
+        };
       }
+
+      // Calculate total size in bytes
+      let totalBytes = 0;
+      const entryDetails = entries.map(entry => {
+        const entrySize = new Blob([JSON.stringify(entry)]).size;
+        totalBytes += entrySize;
+        return {
+          url: entry.url,
+          language: entry.language,
+          timestamp: new Date(entry.timestamp).toLocaleString(),
+          model: entry.model,
+          sizeBytes: entrySize
+        };
+      });
+
+      // Format total size in human-readable format
+      const totalSizeFormatted = this.formatBytes(totalBytes);
 
       entries.sort((a, b) => a.timestamp - b.timestamp);
       const oldestEntry = new Date(entries[0].timestamp).toLocaleString();
       const newestEntry = new Date(entries[entries.length - 1].timestamp).toLocaleString();
 
-      return { size, oldestEntry, newestEntry };
+      return { 
+        size, 
+        totalBytes,
+        totalSizeFormatted,
+        oldestEntry, 
+        newestEntry,
+        entries: entryDetails
+      };
     } catch (error) {
       console.error('Error getting cache stats:', error);
-      return { size: 0 };
+      return { 
+        size: 0, 
+        totalBytes: 0,
+        totalSizeFormatted: '0 B',
+        entries: []
+      };
     }
+  }
+
+  /**
+   * Format bytes in human-readable format
+   * @param bytes Number of bytes
+   * @returns Formatted string (e.g., "1.2 KB", "3.4 MB")
+   */
+  private static formatBytes(bytes: number): string {
+    if (bytes === 0) return '0 B';
+    
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
   }
 
   /**

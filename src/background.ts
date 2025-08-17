@@ -326,6 +326,14 @@ class BackgroundService {
 
     return prompts[language];
   }
+
+  async getCacheStats() {
+    return await SummaryCache.getStats();
+  }
+
+  async clearCache() {
+    return await SummaryCache.clear();
+  }
 }
 
 // Message handling
@@ -350,6 +358,14 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 
     case 'openDetachedWindow':
       service.openDetachedWindow().then(sendResponse);
+      return true;
+
+    case 'getCacheStats':
+      service.getCacheStats().then(sendResponse);
+      return true;
+
+    case 'clearCache':
+      service.clearCache().then(() => sendResponse({ success: true }));
       return true;
 
     default:

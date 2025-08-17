@@ -8,6 +8,17 @@ interface Settings {
   apiUrl?: string;
   language: 'chinese' | 'english';
   autoSummarize?: boolean;
+  cacheMaxSize?: number;
+  cacheExpiryDays?: number;
+}
+
+interface CacheStats {
+  size: number;
+  totalBytes: number;
+  totalSizeFormatted: string;
+  oldestEntry?: string;
+  newestEntry?: string;
+  entries: Array<{url: string; language: string; timestamp: string; model: string; sizeBytes: number}>;
 }
 
 const Options: React.FC = () => {
@@ -15,13 +26,18 @@ const Options: React.FC = () => {
     model: 'claude',
     apiKey: '',
     language: 'chinese',
-    autoSummarize: true
+    autoSummarize: true,
+    cacheMaxSize: 100,
+    cacheExpiryDays: 1
   });
   const [status, setStatus] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [isTestingApi, setIsTestingApi] = useState(false);
+  const [cacheStats, setCacheStats] = useState<CacheStats | null>(null);
+  const [isLoadingCache, setIsLoadingCache] = useState(false);
 
   useEffect(() => {
     loadSettings();
+    loadCacheStats();
   }, []);
 
   const loadSettings = async () => {
@@ -105,6 +121,29 @@ const Options: React.FC = () => {
       showStatus(errorMessage, 'error');
     } finally {
       setIsTestingApi(false);
+    }
+  };
+
+  const loadCacheStats = async () => {
+    setIsLoadingCache(true);
+    try {
+      const stats = await chrome.runtime.sendMessage({ action: 'getCacheStats' });
+      setCacheStats(stats);
+    } catch (error) {
+      console.error('Error loading cache stats:', error);
+    } finally {
+      setIsLoadingCache(false);
+    }
+  };
+
+  const clearCache = async () => {
+    try {
+      await chrome.runtime.sendMessage({ action: 'clearCache' });
+      showStatus('Cache cleared successfully!', 'success');
+      await loadCacheStats(); // Refresh stats
+    } catch (error) {
+      console.error('Error clearing cache:', error);
+      showStatus('Error clearing cache', 'error');
     }
   };
 
@@ -233,6 +272,118 @@ const Options: React.FC = () => {
               </p>
             </div>
           </div>
+        </div>
+
+        {/* Cache Configuration Section */}
+        <div className="bg-gray-50 p-6 rounded-lg">
+          <h2 className="text-xl font-semibold text-gray-900 mb-4">Cache Configuration</h2>
+          
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Maximum Cache Size
+              </label>
+              <input
+                type="number"
+                min="10"
+                max="1000"
+                value={settings.cacheMaxSize || 100}
+                onChange={(e) => setSettings(prev => ({ ...prev, cacheMaxSize: parseInt(e.target.value) || 100 }))}
+                className="block w-full px-4 py-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-base"
+              />
+              <p className="mt-2 text-sm text-gray-500">
+                Number of URLs to cache (10-1000). Older entries are automatically removed.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Cache Expiry (days)
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="30"
+                value={settings.cacheExpiryDays || 1}
+                onChange={(e) => setSettings(prev => ({ ...prev, cacheExpiryDays: parseInt(e.target.value) || 1 }))}
+                className="block w-full px-4 py-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 text-base"
+              />
+              <p className="mt-2 text-sm text-gray-500">
+                How many days to keep cached summaries (1-30). Expired entries are automatically removed.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Cache Management Section */}
+        <div className="bg-gray-50 p-6 rounded-lg">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-semibold text-gray-900">Cache Statistics</h2>
+            <button
+              onClick={loadCacheStats}
+              disabled={isLoadingCache}
+              className="px-4 py-2 text-sm bg-gray-200 hover:bg-gray-300 disabled:bg-gray-100 text-gray-700 rounded-md transition-colors"
+            >
+              {isLoadingCache ? 'Loading...' : 'Refresh'}
+            </button>
+          </div>
+          
+          {cacheStats ? (
+            <div className="space-y-4">
+              {/* Summary Stats */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-white p-4 rounded-lg border border-gray-200">
+                  <div className="text-2xl font-bold text-blue-600">{cacheStats.size}</div>
+                  <div className="text-sm text-gray-600">Cached URLs</div>
+                </div>
+                <div className="bg-white p-4 rounded-lg border border-gray-200">
+                  <div className="text-2xl font-bold text-green-600">{cacheStats.totalSizeFormatted}</div>
+                  <div className="text-sm text-gray-600">Storage Used</div>
+                </div>
+              </div>
+
+              {/* Cache Details */}
+              {cacheStats.size > 0 && (
+                <div className="bg-white p-4 rounded-lg border border-gray-200">
+                  <h3 className="text-lg font-medium text-gray-900 mb-3">Cache Details</h3>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Oldest entry:</span>
+                      <span className="text-gray-900">{cacheStats.oldestEntry}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Newest entry:</span>
+                      <span className="text-gray-900">{cacheStats.newestEntry}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Cache limit:</span>
+                      <span className="text-gray-900">{settings.cacheMaxSize || 100} URLs</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Expiry:</span>
+                      <span className="text-gray-900">{settings.cacheExpiryDays || 1} day{(settings.cacheExpiryDays || 1) > 1 ? 's' : ''}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Clear Cache Button */}
+              {cacheStats.size > 0 && (
+                <div className="flex justify-end">
+                  <button
+                    onClick={clearCache}
+                    className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-medium rounded-md text-sm transition-colors"
+                  >
+                    Clear All Cache
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="text-center text-gray-500 py-8">
+              {isLoadingCache ? 'Loading cache statistics...' : 'Click Refresh to load cache statistics'}
+            </div>
+          )}
         </div>
 
         {/* Action Buttons */}

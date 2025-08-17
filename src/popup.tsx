@@ -8,6 +8,8 @@ interface Settings {
   apiKey: string;
   apiUrl?: string;
   language: 'chinese' | 'english';
+  cacheMaxSize?: number;
+  cacheExpiryDays?: number;
 }
 
 interface TabInfo {
