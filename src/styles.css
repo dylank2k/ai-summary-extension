@@ -19,38 +19,4 @@
     @apply text-blue-600 border-blue-600;
   }
   
-  .resize-handle {
-    position: fixed;
-    bottom: 4px;
-    right: 4px;
-    width: 20px;
-    height: 20px;
-    cursor: se-resize;
-    background: linear-gradient(
-      -45deg, 
-      transparent 40%, 
-      #bbb 40%, 
-      #bbb 43%, 
-      transparent 43%, 
-      transparent 57%, 
-      #bbb 57%, 
-      #bbb 60%, 
-      transparent 60%
-    );
-    z-index: 1000;
-  }
-  
-  .resize-handle:hover {
-    background: linear-gradient(
-      -45deg, 
-      transparent 40%, 
-      #888 40%, 
-      #888 43%, 
-      transparent 43%, 
-      transparent 57%, 
-      #888 57%, 
-      #888 60%, 
-      transparent 60%
-    );
-  }
 }

@@ -33,19 +33,11 @@ const Popup: React.FC = () => {
   const [allTabs, setAllTabs] = useState<TabInfo[]>([]);
   const [status, setStatus] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   
-  const resizeRef = useRef<{ isResizing: boolean; startX: number; startY: number; startWidth: number; startHeight: number }>({
-    isResizing: false,
-    startX: 0,
-    startY: 0,
-    startWidth: 0,
-    startHeight: 0
-  });
 
   useEffect(() => {
     loadSettings();
     loadCurrentTab();
     loadAllTabs();
-    setupResizeHandle();
   }, []);
 
   // Separate useEffect for auto-summarization that waits for currentTab and settings to be loaded
@@ -317,42 +309,6 @@ const Popup: React.FC = () => {
     saveSettings(settings);
   };
 
-  const setupResizeHandle = () => {
-    const handleMouseDown = (e: MouseEvent) => {
-      resizeRef.current.isResizing = true;
-      resizeRef.current.startX = e.clientX;
-      resizeRef.current.startY = e.clientY;
-      resizeRef.current.startWidth = document.body.offsetWidth;
-      resizeRef.current.startHeight = document.body.offsetHeight;
-      e.preventDefault();
-      document.body.style.userSelect = 'none';
-    };
-
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!resizeRef.current.isResizing) return;
-
-      const newWidth = Math.max(350, resizeRef.current.startWidth + (e.clientX - resizeRef.current.startX));
-      const newHeight = Math.max(400, resizeRef.current.startHeight + (e.clientY - resizeRef.current.startY));
-
-      document.body.style.width = `${newWidth}px`;
-      document.body.style.height = `${newHeight}px`;
-    };
-
-    const handleMouseUp = () => {
-      if (resizeRef.current.isResizing) {
-        resizeRef.current.isResizing = false;
-        document.body.style.userSelect = '';
-      }
-    };
-
-    const resizeHandle = document.getElementById('resize-handle');
-    if (resizeHandle) {
-      resizeHandle.addEventListener('mousedown', handleMouseDown);
-      document.addEventListener('mousemove', handleMouseMove);
-      document.addEventListener('mouseup', handleMouseUp);
-      document.addEventListener('mouseleave', handleMouseUp);
-    }
-  };
 
   const renderSummary = () => {
     if (!summary) return null;
@@ -602,8 +558,6 @@ const Popup: React.FC = () => {
         )}
       </div>
 
-      {/* Resize Handle */}
-      <div id="resize-handle" className="resize-handle"></div>
     </div>
   );
 };
