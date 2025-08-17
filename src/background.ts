@@ -105,19 +105,18 @@ class BackgroundService {
       const { text, model, apiKey, apiUrl, url, language = 'chinese' } = request;
 
       console.log('🔥🔥🔥 === CACHE DEBUG START === 🔥🔥🔥');
-      console.log('LLM API called with:', { url, model, hasText: !!text });
+      console.log('LLM API called with:', { url, model, language, hasText: !!text });
 
       // Check cache first if URL is provided
       if (url) {
         console.log('🔍🔍🔍 ABOUT TO CHECK CACHE 🔍🔍🔍');
-        console.log('Checking cache for URL:', url);
-        debugger; // Pause before cache check
-        const cachedSummary = await SummaryCache.get(url);
+        console.log('Checking cache for URL and language:', url, language);
+        const cachedSummary = await SummaryCache.get(url, language);
         if (cachedSummary) {
-          console.log('🎯 CACHE HIT - Returning cached summary for:', url);
+          console.log('🎯 CACHE HIT - Returning cached summary for:', `${url}|${language}`);
           return { summary: cachedSummary };
         }
-        console.log('❌ CACHE MISS - No cached summary found for:', url);
+        console.log('❌ CACHE MISS - No cached summary found for:', `${url}|${language}`);
       } else {
         console.log('⚠️ No URL provided, skipping cache check');
       }
@@ -137,9 +136,9 @@ class BackgroundService {
       // Cache the response if successful and URL is provided
       if (url && apiResponse.summary && !apiResponse.error) {
         console.log('💾💾💾 ABOUT TO STORE IN CACHE 💾💾💾');
-        console.log('💾 Storing in cache:', { url, responseLength: apiResponse.summary.length });
-        await SummaryCache.set(url, apiResponse.summary, model);
-        console.log('✅ Successfully cached response for:', url);
+        console.log('💾 Storing in cache:', { url, language, responseLength: apiResponse.summary.length });
+        await SummaryCache.set(url, language, apiResponse.summary, model);
+        console.log('✅ Successfully cached response for:', `${url}|${language}`);
       } else {
         console.log('❌ Not caching because:', {
           hasUrl: !!url,

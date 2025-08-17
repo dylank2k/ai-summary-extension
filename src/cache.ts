@@ -2,33 +2,46 @@
 
 interface CacheEntry {
   url: string;
+  language: string;
   response: string;
   timestamp: number;
   model: string;
 }
 
 interface CacheStorage {
-  [url: string]: CacheEntry;
+  [key: string]: CacheEntry;
 }
 
 export class SummaryCache {
   private static readonly STORAGE_KEY = 'summary_cache';
   private static readonly MAX_CACHE_SIZE = 100; // Maximum number of cached entries
-  private static readonly CACHE_EXPIRY_DAYS = 7; // Cache expires after 7 days
+  private static readonly CACHE_EXPIRY_DAYS = 1; // Cache expires after 7 days
 
   /**
-   * Get cached summary for a URL
+   * Create cache key from URL and language
+   * @param url The full URL
+   * @param language The language preference
+   * @returns Cache key in format "url|language"
+   */
+  private static createCacheKey(url: string, language: string): string {
+    return `${url}|${language}`;
+  }
+
+  /**
+   * Get cached summary for a URL and language
    * @param url The full URL to look up
+   * @param language The language preference
    * @returns Cached summary or null if not found/expired
    */
-  static async get(url: string): Promise<string | null> {
+  static async get(url: string, language: string): Promise<string | null> {
     try {
+      const cacheKey = this.createCacheKey(url, language);
       const result = await chrome.storage.local.get([this.STORAGE_KEY]);
-      
+
       const cache: CacheStorage = result[this.STORAGE_KEY] || {};
-      
-      const entry = cache[url];
-      
+
+      const entry = cache[cacheKey];
+
       if (!entry) {
         return null;
       }
@@ -36,10 +49,10 @@ export class SummaryCache {
       // Check if cache entry has expired
       const now = Date.now();
       const expiryTime = entry.timestamp + (this.CACHE_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
-      
+
       if (now > expiryTime) {
         // Entry expired, remove it
-        await this.remove(url);
+        await this.remove(url, language);
         return null;
       }
 
@@ -53,17 +66,20 @@ export class SummaryCache {
   /**
    * Store summary in cache
    * @param url The full URL as key
+   * @param language The language preference
    * @param response The LLM response to cache
    * @param model The model used for the response
    */
-  static async set(url: string, response: string, model: string): Promise<void> {
+  static async set(url: string, language: string, response: string, model: string): Promise<void> {
     try {
+      const cacheKey = this.createCacheKey(url, language);
       const result = await chrome.storage.local.get([this.STORAGE_KEY]);
       let cache: CacheStorage = result[this.STORAGE_KEY] || {};
 
       // Add new entry
-      cache[url] = {
+      cache[cacheKey] = {
         url,
+        language,
         response,
         timestamp: Date.now(),
         model
@@ -75,9 +91,10 @@ export class SummaryCache {
         // Sort by timestamp and remove oldest entries
         entries.sort((a, b) => a.timestamp - b.timestamp);
         const entriesToRemove = entries.slice(0, entries.length - this.MAX_CACHE_SIZE);
-        
+
         entriesToRemove.forEach(entry => {
-          delete cache[entry.url];
+          const entryKey = this.createCacheKey(entry.url, entry.language);
+          delete cache[entryKey];
         });
       }
 
@@ -91,14 +108,16 @@ export class SummaryCache {
   /**
    * Remove a specific entry from cache
    * @param url The URL to remove from cache
+   * @param language The language preference
    */
-  static async remove(url: string): Promise<void> {
+  static async remove(url: string, language: string): Promise<void> {
     try {
+      const cacheKey = this.createCacheKey(url, language);
       const result = await chrome.storage.local.get([this.STORAGE_KEY]);
       const cache: CacheStorage = result[this.STORAGE_KEY] || {};
-      
-      delete cache[url];
-      
+
+      delete cache[cacheKey];
+
       await chrome.storage.local.set({ [this.STORAGE_KEY]: cache });
     } catch (error) {
       console.error('Error removing from cache:', error);
@@ -124,10 +143,10 @@ export class SummaryCache {
     try {
       const result = await chrome.storage.local.get([this.STORAGE_KEY]);
       const cache: CacheStorage = result[this.STORAGE_KEY] || {};
-      
+
       const entries = Object.values(cache);
       const size = entries.length;
-      
+
       if (size === 0) {
         return { size: 0 };
       }
@@ -144,12 +163,13 @@ export class SummaryCache {
   }
 
   /**
-   * Check if a URL is cached and not expired
+   * Check if a URL and language combination is cached and not expired
    * @param url The URL to check
+   * @param language The language preference
    * @returns true if cached and valid, false otherwise
    */
-  static async has(url: string): Promise<boolean> {
-    const cached = await this.get(url);
+  static async has(url: string, language: string): Promise<boolean> {
+    const cached = await this.get(url, language);
     return cached !== null;
   }
 }
