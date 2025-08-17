@@ -30,6 +30,7 @@ const Popup: React.FC = () => {
   const [error, setError] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
   const [allTabs, setAllTabs] = useState<TabInfo[]>([]);
+  const [cacheInfo, setCacheInfo] = useState<{fromCache: boolean; cachedAt?: number} | null>(null);
   
 
   useEffect(() => {
@@ -43,7 +44,7 @@ const Popup: React.FC = () => {
     if (currentTab && settings.apiKey && !summary && !error && !isLoading) {
       // Auto-summarize when popup opens and currentTab is available
       const timer = setTimeout(() => {
-        summarizeCurrentPage();
+        summarizeCurrentPage(false); // Allow cache on initial load
       }, 300);
       
       return () => clearTimeout(timer);
@@ -137,7 +138,7 @@ const Popup: React.FC = () => {
     }
   };
 
-  const summarizeCurrentPage = async () => {
+  const summarizeCurrentPage = async (forceFresh: boolean = false) => {
     // Refresh current tab info before attempting summarization
     await loadCurrentTab();
     
@@ -163,6 +164,7 @@ const Popup: React.FC = () => {
     setIsLoading(true);
     setError('');
     setSummary('');
+    setCacheInfo(null);
 
     try {
       const response = await chrome.runtime.sendMessage({
@@ -181,6 +183,7 @@ const Popup: React.FC = () => {
       const llmResponse = await chrome.runtime.sendMessage({
         action: 'summarizeText',
         url: currentTab.url,
+        forceFresh: forceFresh,
         data: {
           text: response,
           model: settings.model,
@@ -195,6 +198,12 @@ const Popup: React.FC = () => {
       }
 
       setSummary(llmResponse.summary);
+      
+      // Set cache information
+      setCacheInfo({
+        fromCache: llmResponse.fromCache || false,
+        cachedAt: llmResponse.cachedAt
+      });
     } catch (error) {
       console.error('Summarization error:', error);
       setError(error instanceof Error ? error.message : 'Summarization failed');
@@ -237,6 +246,24 @@ const Popup: React.FC = () => {
     } catch (error) {
       console.error('Markdown parsing error:', error);
       return <div className="whitespace-pre-wrap">{summary}</div>;
+    }
+  };
+
+  const formatCacheTime = (timestamp: number): string => {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / (1000 * 60));
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    
+    if (diffMins < 1) {
+      return 'Just now';
+    } else if (diffMins < 60) {
+      return `${diffMins}m ago`;
+    } else if (diffHours < 24) {
+      return `${diffHours}h ago`;
+    } else {
+      return date.toLocaleDateString();
     }
   };
 
@@ -324,17 +351,46 @@ const Popup: React.FC = () => {
                   <option value="english">English</option>
                 </select>
               </div>
+              
               <div className="flex-1">
                 <button
-                  onClick={summarizeCurrentPage}
+                  onClick={() => {
+                    if (summary) {
+                      // If summary exists, force fresh fetch
+                      summarizeCurrentPage(true);
+                    } else {
+                      // If no summary, allow cache
+                      summarizeCurrentPage(false);
+                    }
+                  }}
                   disabled={isLoading}
-                  className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-medium py-2 px-4 rounded-md text-sm transition-colors"
+                  className={`w-full font-medium py-2 px-4 rounded-md text-sm transition-colors h-10 flex items-center justify-center gap-2 ${
+                    isLoading 
+                      ? 'bg-gray-400 text-white cursor-not-allowed'
+                      : summary 
+                        ? cacheInfo?.fromCache
+                          ? 'bg-green-600 hover:bg-green-700 text-white border-2 border-green-500'
+                          : 'bg-blue-600 hover:bg-blue-700 text-white border-2 border-blue-500'
+                        : 'bg-blue-600 hover:bg-blue-700 text-white'
+                  }`}
                 >
                   {isLoading ? (
                     <>
-                      <span className="inline-block animate-spin mr-2">⟳</span>
-                      Auto-summarizing...
+                      <span className="inline-block animate-spin">⟳</span>
+                      <span>Summarizing...</span>
                     </>
+                  ) : summary ? (
+                    cacheInfo?.fromCache && cacheInfo.cachedAt ? (
+                      <>
+                        <span className="w-2 h-2 bg-green-200 rounded-full"></span>
+                        <span>Cached {formatCacheTime(cacheInfo.cachedAt)}, click to re-fetch</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="w-2 h-2 bg-blue-200 rounded-full"></span>
+                        <span>Fetched now (cached), click to re-fetch</span>
+                      </>
+                    )
                   ) : (
                     'Summarize Page'
                   )}

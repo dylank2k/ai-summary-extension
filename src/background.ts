@@ -24,6 +24,8 @@ interface LLMRequest {
 interface LLMResponse {
   summary: string;
   error?: string;
+  fromCache?: boolean;
+  cachedAt?: number;
 }
 
 class BackgroundService {
@@ -100,23 +102,31 @@ class BackgroundService {
     }
   }
 
-  async callLLMAPI(request: LLMRequest & { url?: string }): Promise<LLMResponse> {
+  async callLLMAPI(request: LLMRequest & { url?: string; forceFresh?: boolean }): Promise<LLMResponse> {
     try {
-      const { text, model, apiKey, apiUrl, url, language = 'chinese' } = request;
+      const { text, model, apiKey, apiUrl, url, language = 'chinese', forceFresh = false } = request;
 
       console.log('🔥🔥🔥 === CACHE DEBUG START === 🔥🔥🔥');
-      console.log('LLM API called with:', { url, model, language, hasText: !!text });
+      console.log('LLM API called with:', { url, model, language, hasText: !!text, forceFresh });
 
-      // Check cache first if URL is provided
-      if (url) {
+      // Check cache first if URL is provided and not forcing fresh
+      if (url && !forceFresh) {
         console.log('🔍🔍🔍 ABOUT TO CHECK CACHE 🔍🔍🔍');
         console.log('Checking cache for URL and language:', url, language);
         const cachedSummary = await SummaryCache.get(url, language);
         if (cachedSummary) {
           console.log('🎯 CACHE HIT - Returning cached summary for:', `${url}|${language}`);
-          return { summary: cachedSummary };
+          // Get cache entry details for timestamp
+          const cacheEntry = await this.getCacheEntry(url, language);
+          return { 
+            summary: cachedSummary,
+            fromCache: true,
+            cachedAt: cacheEntry?.timestamp
+          };
         }
         console.log('❌ CACHE MISS - No cached summary found for:', `${url}|${language}`);
+      } else if (forceFresh) {
+        console.log('🔄 FORCE FRESH - Skipping cache check due to forceFresh flag');
       } else {
         console.log('⚠️ No URL provided, skipping cache check');
       }
@@ -154,6 +164,18 @@ class BackgroundService {
         summary: '',
         error: error instanceof Error ? error.message : 'Unknown error'
       };
+    }
+  }
+
+  private async getCacheEntry(url: string, language: string): Promise<any> {
+    try {
+      const result = await chrome.storage.local.get(['summary_cache']);
+      const cache = result['summary_cache'] || {};
+      const cacheKey = `${url}|${language}`;
+      return cache[cacheKey] || null;
+    } catch (error) {
+      console.error('Error getting cache entry:', error);
+      return null;
     }
   }
 
@@ -321,8 +343,8 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 
     case 'summarizeText':
       // Add URL to the request for caching
-      console.log('Summarize request received:', { url: request.url, hasData: !!request.data });
-      const dataWithUrl = { ...request.data, url: request.url };
+      console.log('Summarize request received:', { url: request.url, hasData: !!request.data, forceFresh: request.forceFresh });
+      const dataWithUrl = { ...request.data, url: request.url, forceFresh: request.forceFresh };
       service.callLLMAPI(dataWithUrl).then(sendResponse);
       return true;
 
