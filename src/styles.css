@@ -1,0 +1,56 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom components */
+@layer components {
+  .chrome-popup {
+    width: 400px;
+    min-height: 500px;
+    max-width: 800px;
+    min-width: 350px;
+  }
+  
+  .tab-button {
+    @apply flex-1 px-3 py-2 text-sm font-medium text-gray-500 border-b-2 border-transparent hover:text-gray-700 hover:border-gray-300 focus:outline-none;
+  }
+  
+  .tab-button.active {
+    @apply text-blue-600 border-blue-600;
+  }
+  
+  .resize-handle {
+    position: fixed;
+    bottom: 4px;
+    right: 4px;
+    width: 20px;
+    height: 20px;
+    cursor: se-resize;
+    background: linear-gradient(
+      -45deg, 
+      transparent 40%, 
+      #bbb 40%, 
+      #bbb 43%, 
+      transparent 43%, 
+      transparent 57%, 
+      #bbb 57%, 
+      #bbb 60%, 
+      transparent 60%
+    );
+    z-index: 1000;
+  }
+  
+  .resize-handle:hover {
+    background: linear-gradient(
+      -45deg, 
+      transparent 40%, 
+      #888 40%, 
+      #888 43%, 
+      transparent 43%, 
+      transparent 57%, 
+      #888 57%, 
+      #888 60%, 
+      transparent 60%
+    );
+  }
+}
