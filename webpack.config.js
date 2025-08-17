@@ -5,7 +5,8 @@ module.exports = {
   entry: {
     background: './src/background.ts',
     content: './src/content.ts',
-    popup: './src/popup.tsx'
+    popup: './src/popup.tsx',
+    options: './src/options.tsx'
   },
   module: {
     rules: [
@@ -47,6 +48,7 @@ module.exports = {
       patterns: [
         { from: 'manifest.json', to: 'manifest.json' },
         { from: 'src/popup.html', to: 'popup.html' },
+        { from: 'src/options.html', to: 'options.html' },
         { from: 'icons', to: 'icons' }
       ],
     }),

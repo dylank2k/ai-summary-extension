@@ -16,7 +16,7 @@ interface TabInfo {
   title: string;
 }
 
-type TabType = 'current' | 'all-tabs' | 'settings';
+type TabType = 'current' | 'all-tabs';
 
 const Popup: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('current');
@@ -29,9 +29,7 @@ const Popup: React.FC = () => {
   const [summary, setSummary] = useState<string>('');
   const [error, setError] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isTestingApi, setIsTestingApi] = useState(false);
   const [allTabs, setAllTabs] = useState<TabInfo[]>([]);
-  const [status, setStatus] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   
 
   useEffect(() => {
@@ -63,15 +61,6 @@ const Popup: React.FC = () => {
     }
   };
 
-  const saveSettings = async (newSettings: Settings) => {
-    try {
-      await chrome.storage.local.set({ settings: newSettings });
-      showStatus('Settings saved successfully!', 'success');
-    } catch (error) {
-      console.error('Error saving settings:', error);
-      showStatus('Error saving settings', 'error');
-    }
-  };
 
   const loadCurrentTab = async () => {
     try {
@@ -167,8 +156,7 @@ const Popup: React.FC = () => {
     }
 
     if (!settings.apiKey) {
-      setError('Please configure your API key in Settings');
-      setActiveTab('settings'); // Switch to settings tab
+      setError('Please configure your API key in the Options page. Click Settings above.');
       return;
     }
 
@@ -215,67 +203,6 @@ const Popup: React.FC = () => {
     }
   };
 
-  const testApiConnection = async () => {
-    if (!settings.apiKey) {
-      showStatus('Please enter an API key first', 'error');
-      return;
-    }
-
-    setIsTestingApi(true);
-    
-    try {
-      const response = await chrome.runtime.sendMessage({
-        action: 'summarizeText',
-        data: {
-          text: 'This is a test message to verify API connectivity.',
-          model: settings.model,
-          apiKey: settings.apiKey,
-          apiUrl: settings.apiUrl
-        }
-      });
-
-      if (response.error) {
-        throw new Error(response.error);
-      }
-
-      showStatus('API connection successful!', 'success');
-    } catch (error) {
-      console.error('API test failed:', error);
-      
-      let errorMessage = 'API test failed';
-      
-      if (error instanceof Error) {
-        errorMessage += `:\n\nError: ${error.message}`;
-        
-        if (error.message.includes('404')) {
-          errorMessage += '\n\nThis usually means the API endpoint URL is incorrect.';
-        } else if (error.message.includes('401') || error.message.includes('403')) {
-          errorMessage += '\n\nThis usually means your API key is invalid or has insufficient permissions.';
-        } else if (error.message.includes('429')) {
-          errorMessage += '\n\nRate limit exceeded. Please wait before trying again.';
-        } else if (error.message.includes('500') || error.message.includes('502') || error.message.includes('503')) {
-          errorMessage += '\n\nServer error. The API service may be temporarily unavailable.';
-        } else if (error.message.includes('network') || error.message.includes('fetch')) {
-          errorMessage += '\n\nNetwork error. Check your internet connection and firewall settings.';
-        }
-        
-        errorMessage += `\n\nDebug Info:`;
-        errorMessage += `\nModel: ${settings.model}`;
-        if (settings.model === 'claude') {
-          errorMessage += `\nAPI: Anthropic Claude API`;
-        } else {
-          errorMessage += `\nAPI URL: ${settings.apiUrl || 'Default (OpenRouter)'}`;
-        }
-        errorMessage += `\nAPI Key: ${settings.apiKey ? `${settings.apiKey.substring(0, 8)}...` : 'Not set'}`;
-      } else {
-        errorMessage += ': Unknown error occurred';
-      }
-      
-      showStatus(errorMessage, 'error');
-    } finally {
-      setIsTestingApi(false);
-    }
-  };
 
   const openDetachedWindow = async () => {
     try {
@@ -283,7 +210,6 @@ const Popup: React.FC = () => {
       window.close();
     } catch (error) {
       console.error('Error opening detached window:', error);
-      showStatus('Error opening detached window', 'error');
     }
   };
 
@@ -295,19 +221,6 @@ const Popup: React.FC = () => {
     }
   };
 
-  const showStatus = (message: string, type: 'success' | 'error') => {
-    setStatus({ message, type });
-    setTimeout(() => setStatus(null), type === 'error' ? 10000 : 3000);
-  };
-
-  const handleSettingsSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!settings.apiKey) {
-      showStatus('API key is required', 'error');
-      return;
-    }
-    saveSettings(settings);
-  };
 
 
   const renderSummary = () => {
@@ -328,49 +241,52 @@ const Popup: React.FC = () => {
   };
 
   return (
-    <div className="chrome-popup bg-white flex flex-col">
+    <div className="w-[800px] min-w-[700px] max-w-[800px] min-h-[500px] bg-white flex flex-col overflow-hidden box-border">
       {/* Header */}
-      <div className="border-b border-gray-200 pb-3 mb-3">
+      <div className="border-b border-gray-200 pb-3 mb-3 px-4 box-border">
         <h1 className="text-lg font-semibold text-blue-600 m-0">AI Page Summarizer</h1>
       </div>
 
       {/* Tabs Navigation */}
-      <div className="border-b border-gray-200 mb-3">
-        <nav className="flex space-x-0 -mb-px">
+      <div className="border-b border-gray-200 mb-3 px-4 box-border">
+        <nav className="flex justify-between items-center -mb-px">
+          <div className="flex space-x-0">
+            <button
+              className={`tab-button ${activeTab === 'current' ? 'active' : ''}`}
+              onClick={() => setActiveTab('current')}
+            >
+              Current Page
+            </button>
+            <button
+              className={`tab-button ${activeTab === 'all-tabs' ? 'active' : ''}`}
+              onClick={() => setActiveTab('all-tabs')}
+            >
+              All Tabs
+            </button>
+          </div>
           <button
-            className={`tab-button ${activeTab === 'current' ? 'active' : ''}`}
-            onClick={() => setActiveTab('current')}
+            onClick={() => chrome.runtime.openOptionsPage()}
+            className="p-2 text-gray-400 hover:text-gray-600 rounded-md hover:bg-gray-50"
+            title="Open Settings"
           >
-            Current Page
-          </button>
-          <button
-            className={`tab-button ${activeTab === 'all-tabs' ? 'active' : ''}`}
-            onClick={() => setActiveTab('all-tabs')}
-          >
-            All Tabs
-          </button>
-          <button
-            className={`tab-button ${activeTab === 'settings' ? 'active' : ''}`}
-            onClick={() => setActiveTab('settings')}
-          >
-            Settings
+            ⚙️
           </button>
         </nav>
       </div>
 
       {/* Tab Content */}
-      <div className="flex-1 flex flex-col min-h-0">
+      <div className="flex-1 flex flex-col min-h-0 px-4 box-border overflow-hidden">
         {/* Current Page Tab */}
         {activeTab === 'current' && (
           <div className="flex flex-col h-full space-y-3">
             {/* Page Info Card */}
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
               <div className="flex justify-between items-start">
-                <div className="flex-1 mr-2 min-w-0">
+                <div className="flex-1 mr-2 min-w-0 overflow-hidden">
                   <h2 className="text-sm font-medium text-gray-900 truncate mb-1">
                     {currentTab?.title || 'Loading...'}
                   </h2>
-                  <p className="text-xs text-gray-500 break-all">
+                  <p className="text-xs text-gray-500 truncate">
                     {currentTab?.url || ''}
                   </p>
                 </div>
@@ -472,7 +388,7 @@ const Popup: React.FC = () => {
                     <h4 className="text-sm font-medium text-gray-900 mb-1 truncate">
                       {tab.title}
                     </h4>
-                    <p className="text-xs text-gray-500 break-all">
+                    <p className="text-xs text-gray-500 truncate">
                       {tab.url}
                     </p>
                   </div>
@@ -482,80 +398,6 @@ const Popup: React.FC = () => {
           </div>
         )}
 
-        {/* Settings Tab */}
-        {activeTab === 'settings' && (
-          <form onSubmit={handleSettingsSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                AI Model
-              </label>
-              <select
-                value={settings.model}
-                onChange={(e) => setSettings(prev => ({ ...prev, model: e.target.value as 'claude' | 'openai' }))}
-                className="block w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-              >
-                <option value="claude">Claude (Anthropic)</option>
-                <option value="openai">GPT-4 (OpenAI)</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                API Key
-              </label>
-              <input
-                type="password"
-                value={settings.apiKey}
-                onChange={(e) => setSettings(prev => ({ ...prev, apiKey: e.target.value }))}
-                placeholder="Enter your API key"
-                className="block w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-              />
-              <p className="mt-1 text-xs text-gray-500">
-                Uses OpenRouter API - get your key at openrouter.ai
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                API URL (optional)
-              </label>
-              <input
-                type="text"
-                value={settings.apiUrl || ''}
-                onChange={(e) => setSettings(prev => ({ ...prev, apiUrl: e.target.value }))}
-                placeholder="https://openrouter.ai/api/v1/chat/completions"
-                className="block w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
-
-            <div className="flex gap-2">
-              <button
-                type="submit"
-                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-md text-sm transition-colors"
-              >
-                Save Settings
-              </button>
-              <button
-                type="button"
-                onClick={testApiConnection}
-                disabled={isTestingApi}
-                className="flex-1 bg-gray-100 hover:bg-gray-200 disabled:bg-gray-50 text-gray-700 font-medium py-2 px-4 rounded-md text-sm border border-gray-300 transition-colors"
-              >
-                {isTestingApi ? 'Testing...' : 'Test API'}
-              </button>
-            </div>
-
-            {status && (
-              <div className={`px-3 py-2 rounded-md text-sm whitespace-pre-line ${
-                status.type === 'success' 
-                  ? 'bg-green-50 border border-green-200 text-green-700'
-                  : 'bg-red-50 border border-red-200 text-red-700'
-              }`}>
-                {status.message}
-              </div>
-            )}
-          </form>
-        )}
       </div>
 
     </div>

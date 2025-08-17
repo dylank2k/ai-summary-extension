@@ -2,14 +2,19 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Reset browser defaults that can cause horizontal scroll */
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+}
+
 /* Custom components */
 @layer components {
-  .chrome-popup {
-    width: 400px;
-    min-height: 500px;
-    max-width: 800px;
-    min-width: 350px;
-  }
   
   .tab-button {
     @apply flex-1 px-3 py-2 text-sm font-medium text-gray-500 border-b-2 border-transparent hover:text-gray-700 hover:border-gray-300 focus:outline-none;
