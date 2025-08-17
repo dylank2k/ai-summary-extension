@@ -171,7 +171,7 @@ class BackgroundService {
         },
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
-          max_tokens: 500,
+          max_tokens: 1000,
           messages: [
             {
               role: 'user',
@@ -205,7 +205,7 @@ class BackgroundService {
     const endpoint = apiUrl || 'https://openrouter.ai/api/v1/chat/completions';
 
     const modelMap = {
-      'claude': 'anthropic/claude-3-sonnet',
+      'claude': 'anthropic/claude-sonnet-4-20250514',
       'openai': 'openai/gpt-4'
     };
 
@@ -223,7 +223,7 @@ class BackgroundService {
           messages: [
             {
               role: 'system',
-              content: language === 'chinese' 
+              content: language === 'chinese'
                 ? '你是一个有用的助手，专门总结网页内容。请提供简洁、结构清晰的摘要，突出主要观点和关键信息。'
                 : 'You are a helpful assistant that summarizes web page content. Provide a concise, well-structured summary highlighting the main points and key information.'
             },
@@ -232,8 +232,8 @@ class BackgroundService {
               content: this.createPrompt(text, language)
             }
           ],
-          max_tokens: 500,
-          temperature: 0.3
+          max_tokens: 1000,
+          temperature: 0.5
         })
       });
 
@@ -301,7 +301,7 @@ class BackgroundService {
       chinese: `请为以下网页内容提供一个简洁、结构清晰的中文摘要，突出主要观点和关键信息：\n\n${text}`,
       english: `Please provide a concise, well-structured summary of this webpage content, highlighting the main points and key information:\n\n${text}`
     };
-    
+
     return prompts[language];
   }
 }
