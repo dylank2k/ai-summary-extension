@@ -156,7 +156,7 @@ npm run clean
 - **Asset copying** for icons and manifest files
 
 ## Wishlist
-- **Better Caching** make caching expire with dynamic detection
+- [x] **Better Caching** make caching expire with dynamic detection
 - **No API key use** figure out how to do summary without API keys
 - [x]**get the summary right away** do not wait for user to click the button, just start fetching the summary
 - **configurable key and model** make model selection and secrets managed by some other tooling instead of browser local storage
@@ -166,7 +166,7 @@ npm run clean
 - **chat interface** implement add chat interface
 - **iterate through pages and summarize discussion** reading through all comments 
 - **agentic flow** make sure page click through the end, or scoll to the full content
-- **keep it alive** have background thread running even if lose focus
+- [x] **keep it alive** have background thread running even if lose focus
 
 ## Contributing
 

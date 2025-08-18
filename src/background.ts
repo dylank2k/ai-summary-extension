@@ -28,14 +28,45 @@ interface LLMResponse {
   cachedAt?: number;
 }
 
+interface PendingRequest {
+  id: string;
+  tabUrl: string;
+  status: 'pending' | 'processing' | 'completed' | 'error';
+  result?: LLMResponse;
+  error?: string;
+  timestamp: number;
+}
+
 class BackgroundService {
   private static instance: BackgroundService;
+  private pendingRequests = new Map<string, PendingRequest>();
+  private cleanupInterval: any = null;
 
   static getInstance(): BackgroundService {
     if (!this.instance) {
       this.instance = new BackgroundService();
+      this.instance.startCleanupTimer();
     }
     return this.instance;
+  }
+
+  private startCleanupTimer() {
+    // Clean up old requests every 5 minutes
+    this.cleanupInterval = setInterval(() => {
+      this.cleanupOldRequests();
+    }, 5 * 60 * 1000);
+  }
+
+  private cleanupOldRequests() {
+    const now = Date.now();
+    const maxAge = 30 * 60 * 1000; // 30 minutes
+    
+    for (const [id, request] of this.pendingRequests) {
+      if (now - request.timestamp > maxAge) {
+        console.log('Cleaning up old request:', id);
+        this.pendingRequests.delete(id);
+      }
+    }
   }
 
   async getAllTabsInfo(): Promise<TabInfo[]> {
@@ -100,6 +131,58 @@ class BackgroundService {
       console.error('Error extracting text from tab:', error);
       return '';
     }
+  }
+
+  async startLLMRequest(request: LLMRequest & { url?: string; forceFresh?: boolean }, requestId?: string): Promise<string> {
+    const id = requestId || this.generateRequestId();
+    const pendingRequest: PendingRequest = {
+      id,
+      tabUrl: request.url || '',
+      status: 'pending',
+      timestamp: Date.now()
+    };
+    
+    this.pendingRequests.set(id, pendingRequest);
+    
+    // Process request asynchronously
+    this.processLLMRequest(id, request).catch(error => {
+      console.error('LLM request processing failed:', error);
+      const req = this.pendingRequests.get(id);
+      if (req) {
+        req.status = 'error';
+        req.error = error instanceof Error ? error.message : 'Unknown error';
+        this.pendingRequests.set(id, req);
+      }
+    });
+    
+    return id;
+  }
+
+  async processLLMRequest(requestId: string, request: LLMRequest & { url?: string; forceFresh?: boolean }): Promise<void> {
+    const pendingRequest = this.pendingRequests.get(requestId);
+    if (!pendingRequest) return;
+    
+    pendingRequest.status = 'processing';
+    this.pendingRequests.set(requestId, pendingRequest);
+    
+    try {
+      const result = await this.callLLMAPI(request);
+      pendingRequest.status = 'completed';
+      pendingRequest.result = result;
+      this.pendingRequests.set(requestId, pendingRequest);
+    } catch (error) {
+      pendingRequest.status = 'error';
+      pendingRequest.error = error instanceof Error ? error.message : 'Unknown error';
+      this.pendingRequests.set(requestId, pendingRequest);
+    }
+  }
+
+  getRequestStatus(requestId: string): PendingRequest | null {
+    return this.pendingRequests.get(requestId) || null;
+  }
+
+  private generateRequestId(): string {
+    return `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
 
   async callLLMAPI(request: LLMRequest & { url?: string; forceFresh?: boolean }): Promise<LLMResponse> {
@@ -349,11 +432,28 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
       service.extractTextFromTab(request.tabId).then(sendResponse);
       return true;
 
-    case 'summarizeText':
-      // Add URL to the request for caching
-      console.log('Summarize request received:', { url: request.url, hasData: !!request.data, forceFresh: request.forceFresh });
+    case 'startSummarize':
+      // Start async summarization and return request ID immediately
+      console.log('Start summarize request received:', { url: request.url, hasData: !!request.data, forceFresh: request.forceFresh });
       const dataWithUrl = { ...request.data, url: request.url, forceFresh: request.forceFresh };
-      service.callLLMAPI(dataWithUrl).then(sendResponse);
+      service.startLLMRequest(dataWithUrl, request.requestId).then(requestId => {
+        sendResponse({ requestId });
+      }).catch(error => {
+        sendResponse({ error: error.message });
+      });
+      return true;
+
+    case 'getRequestStatus':
+      // Check status of a request by ID
+      const status = service.getRequestStatus(request.requestId);
+      sendResponse(status);
+      return true;
+
+    case 'summarizeText':
+      // Legacy synchronous method (kept for compatibility)
+      console.log('Summarize request received:', { url: request.url, hasData: !!request.data, forceFresh: request.forceFresh });
+      const legacyDataWithUrl = { ...request.data, url: request.url, forceFresh: request.forceFresh };
+      service.callLLMAPI(legacyDataWithUrl).then(sendResponse);
       return true;
 
     case 'openDetachedWindow':

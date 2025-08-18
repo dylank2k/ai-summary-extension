@@ -33,12 +33,21 @@ const Popup: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [allTabs, setAllTabs] = useState<TabInfo[]>([]);
   const [cacheInfo, setCacheInfo] = useState<{fromCache: boolean; cachedAt?: number} | null>(null);
+  const [currentRequestId, setCurrentRequestId] = useState<string | null>(null);
+  const pollIntervalRef = useRef<number | null>(null);
   
 
   useEffect(() => {
     loadSettings();
     loadCurrentTab();
     loadAllTabs();
+    loadPersistentState();
+    
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+    };
   }, []);
 
   // Separate useEffect for auto-summarization that waits for currentTab and settings to be loaded
@@ -62,6 +71,100 @@ const Popup: React.FC = () => {
     } catch (error) {
       console.error('Error loading settings:', error);
     }
+  };
+
+  const loadPersistentState = async () => {
+    try {
+      const result = await chrome.storage.local.get(['popup_state']);
+      const state = result.popup_state;
+      if (state && state.requestId) {
+        setCurrentRequestId(state.requestId);
+        setIsLoading(true);
+        startPollingRequest(state.requestId);
+      }
+    } catch (error) {
+      console.error('Error loading persistent state:', error);
+    }
+  };
+
+  const savePersistentState = async (requestId: string | null, tabUrl?: string) => {
+    try {
+      await chrome.storage.local.set({
+        popup_state: {
+          requestId,
+          tabUrl: tabUrl || currentTab?.url,
+          timestamp: Date.now()
+        }
+      });
+    } catch (error) {
+      console.error('Error saving persistent state:', error);
+    }
+  };
+
+  const clearPersistentState = async () => {
+    try {
+      await chrome.storage.local.remove(['popup_state']);
+    } catch (error) {
+      console.error('Error clearing persistent state:', error);
+    }
+  };
+
+  const startPollingRequest = (requestId: string) => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+    }
+    
+    pollIntervalRef.current = setInterval(async () => {
+      try {
+        const status = await chrome.runtime.sendMessage({
+          action: 'getRequestStatus',
+          requestId: requestId
+        });
+
+        if (status) {
+          if (status.status === 'completed' && status.result) {
+            setIsLoading(false);
+            setSummary(status.result.summary);
+            setCacheInfo({
+              fromCache: status.result.fromCache || false,
+              cachedAt: status.result.cachedAt
+            });
+            setError('');
+            setCurrentRequestId(null);
+            clearPersistentState();
+            
+            if (pollIntervalRef.current) {
+              clearInterval(pollIntervalRef.current);
+              pollIntervalRef.current = null;
+            }
+          } else if (status.status === 'error') {
+            setIsLoading(false);
+            setError(status.error || 'Request failed');
+            setCurrentRequestId(null);
+            clearPersistentState();
+            
+            if (pollIntervalRef.current) {
+              clearInterval(pollIntervalRef.current);
+              pollIntervalRef.current = null;
+            }
+          }
+          // If status is 'pending' or 'processing', continue polling
+        } else {
+          // Request not found, probably expired
+          setIsLoading(false);
+          setError('Request not found - it may have expired');
+          setCurrentRequestId(null);
+          clearPersistentState();
+          
+          if (pollIntervalRef.current) {
+            clearInterval(pollIntervalRef.current);
+            pollIntervalRef.current = null;
+          }
+        }
+      } catch (error) {
+        console.error('Error polling request status:', error);
+      }
+    }, 1000); // Poll every second
   };
 
 
@@ -163,6 +266,12 @@ const Popup: React.FC = () => {
       return;
     }
 
+    // Clear any existing polling
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+
     setIsLoading(true);
     setError('');
     setSummary('');
@@ -182,8 +291,9 @@ const Popup: React.FC = () => {
         throw new Error('Page content is too short to summarize meaningfully.');
       }
 
-      const llmResponse = await chrome.runtime.sendMessage({
-        action: 'summarizeText',
+      // Start async summarization
+      const startResponse = await chrome.runtime.sendMessage({
+        action: 'startSummarize',
         url: currentTab.url,
         forceFresh: forceFresh,
         data: {
@@ -195,22 +305,24 @@ const Popup: React.FC = () => {
         }
       });
 
-      if (llmResponse.error) {
-        throw new Error(llmResponse.error);
+      if (startResponse.error) {
+        throw new Error(startResponse.error);
       }
 
-      setSummary(llmResponse.summary);
+      const requestId = startResponse.requestId;
+      setCurrentRequestId(requestId);
       
-      // Set cache information
-      setCacheInfo({
-        fromCache: llmResponse.fromCache || false,
-        cachedAt: llmResponse.cachedAt
-      });
+      // Save state for persistence
+      await savePersistentState(requestId, currentTab.url);
+      
+      // Start polling for results
+      startPollingRequest(requestId);
+
     } catch (error) {
       console.error('Summarization error:', error);
       setError(error instanceof Error ? error.message : 'Summarization failed');
-    } finally {
       setIsLoading(false);
+      clearPersistentState();
     }
   };
 
@@ -355,48 +467,64 @@ const Popup: React.FC = () => {
               </div>
               
               <div className="flex-1">
-                <button
-                  onClick={() => {
-                    if (summary) {
-                      // If summary exists, force fresh fetch
-                      summarizeCurrentPage(true);
-                    } else {
-                      // If no summary, allow cache
-                      summarizeCurrentPage(false);
-                    }
-                  }}
-                  disabled={isLoading}
-                  className={`w-full font-medium py-2 px-4 rounded-md text-sm transition-colors h-10 flex items-center justify-center gap-2 ${
-                    isLoading 
-                      ? 'bg-gray-400 text-white cursor-not-allowed'
-                      : summary 
-                        ? cacheInfo?.fromCache
-                          ? 'bg-green-600 hover:bg-green-700 text-white border-2 border-green-500'
-                          : 'bg-blue-600 hover:bg-blue-700 text-white border-2 border-blue-500'
-                        : 'bg-blue-600 hover:bg-blue-700 text-white'
-                  }`}
-                >
-                  {isLoading ? (
-                    <>
-                      <span className="inline-block animate-spin">⟳</span>
-                      <span>Summarizing...</span>
-                    </>
-                  ) : summary ? (
-                    cacheInfo?.fromCache && cacheInfo.cachedAt ? (
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      if (isLoading && currentRequestId) {
+                        // Cancel current request
+                        if (pollIntervalRef.current) {
+                          clearInterval(pollIntervalRef.current);
+                          pollIntervalRef.current = null;
+                        }
+                        setIsLoading(false);
+                        setCurrentRequestId(null);
+                        clearPersistentState();
+                        setError('Request cancelled');
+                      } else if (summary) {
+                        // If summary exists, force fresh fetch
+                        summarizeCurrentPage(true);
+                      } else {
+                        // If no summary, allow cache
+                        summarizeCurrentPage(false);
+                      }
+                    }}
+                    className={`flex-1 font-medium py-2 px-4 rounded-md text-sm transition-colors h-10 flex items-center justify-center gap-2 ${
+                      isLoading 
+                        ? 'bg-red-500 hover:bg-red-600 text-white'
+                        : summary 
+                          ? cacheInfo?.fromCache
+                            ? 'bg-green-600 hover:bg-green-700 text-white border-2 border-green-500'
+                            : 'bg-blue-600 hover:bg-blue-700 text-white border-2 border-blue-500'
+                          : 'bg-blue-600 hover:bg-blue-700 text-white'
+                    }`}
+                  >
+                    {isLoading ? (
                       <>
-                        <span className="w-2 h-2 bg-green-200 rounded-full"></span>
-                        <span>Cached {formatCacheTime(cacheInfo.cachedAt)}, click to re-fetch</span>
+                        <span>✕</span>
+                        <span>Cancel</span>
                       </>
+                    ) : summary ? (
+                      cacheInfo?.fromCache && cacheInfo.cachedAt ? (
+                        <>
+                          <span className="w-2 h-2 bg-green-200 rounded-full"></span>
+                          <span>Cached {formatCacheTime(cacheInfo.cachedAt)}, click to re-fetch</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="w-2 h-2 bg-blue-200 rounded-full"></span>
+                          <span>Fetched now (cached), click to re-fetch</span>
+                        </>
+                      )
                     ) : (
-                      <>
-                        <span className="w-2 h-2 bg-blue-200 rounded-full"></span>
-                        <span>Fetched now (cached), click to re-fetch</span>
-                      </>
-                    )
-                  ) : (
-                    'Summarize Page'
+                      'Summarize Page'
+                    )}
+                  </button>
+                  {isLoading && (
+                    <div className="flex items-center justify-center px-3 bg-blue-50 rounded-md">
+                      <span className="inline-block animate-spin text-blue-600">⟳</span>
+                    </div>
                   )}
-                </button>
+                </div>
               </div>
             </div>
 
