@@ -5,10 +5,10 @@ A Chrome extension that extracts text from web pages and generates AI-powered su
 ## Features
 
 ### 🤖 AI-Powered Summarization
-- **Multiple AI Models**: Support for Anthropic Claude and OpenAI GPT-4
+- **Multiple AI Models**: Support for Anthropic Claude, OpenAI GPT-4, and Portkey
 - **Language Support**: Generate summaries in Chinese (中文) or English
 - **Smart Caching**: Automatic caching of summaries by URL to avoid redundant API calls
-- **API Flexibility**: Use direct Anthropic API or OpenRouter for model access
+- **API Flexibility**: Use direct Anthropic API, OpenRouter, or Portkey for model access
 
 ### 📄 Content Extraction
 - **Intelligent Text Extraction**: Extracts clean text content from web pages
@@ -27,7 +27,23 @@ A Chrome extension that extracts text from web pages and generates AI-powered su
 - **Settings Persistence**: Saves API keys and preferences securely
 - **API Testing**: Built-in connection testing for troubleshooting
 - **Multiple Endpoints**: Support for custom API URLs
+- **Custom Prompts**: Edit default prompts for both Chinese and English summaries
+- **Prompt Parameters**: Customize temperature and max tokens for fine-tuning AI responses
 - **Detached Window**: Open popup in a separate window for better workflow
+
+## Screenshots
+
+### Main Extension Interface
+![AI Page Summarizer Main Interface](screenshots/main-interface.png)
+*The main popup interface showing the current page summary with language selection and re-fetch options. Features a clean design with navigation tabs, page information, and AI-generated summaries with markdown formatting.*
+
+### AI Model Configuration
+![AI Model Configuration](screenshots/ai-configuration.png)
+*Settings page for configuring AI model providers (Claude/OpenAI), API keys, and custom endpoints. Includes language settings and API testing functionality.*
+
+### Extension Behavior & Cache Settings
+![Extension Behavior & Cache](screenshots/behavior-cache.png)
+*Configuration options for extension behavior, caching settings, and storage statistics. Allows users to customize auto-summarization, cache size, and expiry settings.*
 
 ## Technical Architecture
 
@@ -95,13 +111,25 @@ npm run clean
 
 ### Configuration
 1. Go to the **Settings** tab in the popup
-2. Choose your AI model (Claude or OpenAI)
+2. Choose your AI model (Claude, OpenAI, or Portkey)
 3. Enter your API key:
    - **Claude**: Get from [Anthropic Console](https://console.anthropic.com/)
    - **OpenAI**: Get from [OpenRouter](https://openrouter.ai/) (recommended)
-4. Optionally set a custom API URL
-5. Click **Test API** to verify connectivity
-6. Click **Save Settings** to persist configuration
+   - **Portkey**: Get from [Portkey App](https://app.portkey.ai/)
+4. For Portkey, optionally enter your Virtual Key for model routing
+5. Optionally set a custom API URL
+6. Click **Test API** to verify connectivity
+7. Click **Save Settings** to persist configuration
+
+### Custom Prompt Configuration
+1. In the **Prompt Configuration** section, you can customize:
+   - **System Prompts**: Define the AI assistant's role and behavior
+   - **User Prompt Templates**: Customize how the webpage content is presented to the AI
+   - **Temperature**: Control randomness (0 = deterministic, 2 = very random)
+   - **Max Tokens**: Set maximum length of generated summaries
+2. Use `{text}` as a placeholder for webpage content in user prompts
+3. Preview your prompts with sample text to see how they'll be used
+4. Click **Reset to Default** to restore original prompts
 
 ### Advanced Features
 - **Tab Management**: Use "All Tabs" to see and switch between open tabs
@@ -114,6 +142,7 @@ npm run clean
 ### Supported Models
 - **Claude**: Direct integration with Anthropic's API
 - **OpenAI GPT-4**: Via OpenRouter or direct OpenAI API
+- **Portkey**: Hybrid integration with Portkey's unified API gateway using the official [Portkey Node.js SDK](https://portkey.ai/docs/api-reference/sdk/node) with automatic fallback to direct API calls for browser extension compatibility
 
 ### Caching Strategy
 - Summaries cached by URL for 7 days
