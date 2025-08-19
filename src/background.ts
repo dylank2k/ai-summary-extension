@@ -335,6 +335,7 @@ class BackgroundService {
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
           max_tokens: promptConfig.maxTokens,
+          system: promptConfig.systemPrompt,
           messages: [
             {
               role: 'user',
@@ -676,6 +677,15 @@ class BackgroundService {
     // Get prompt configuration for chat
     const promptConfig = this.getPromptConfig(language, customPrompts);
 
+    // Separate system messages from user/assistant messages
+    const systemMessages = messages.filter(msg => msg.role === 'system');
+    const conversationMessages = messages.filter(msg => msg.role !== 'system');
+    
+    // Combine all system messages into one system prompt
+    const systemPrompt = systemMessages.length > 0 
+      ? systemMessages.map(msg => msg.content).join('\n\n')
+      : promptConfig.systemPrompt;
+
     try {
       const response = await fetch(endpoint, {
         method: 'POST',
@@ -688,7 +698,8 @@ class BackgroundService {
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
           max_tokens: promptConfig.maxTokens,
-          messages: messages
+          system: systemPrompt,
+          messages: conversationMessages
         })
       });
 
