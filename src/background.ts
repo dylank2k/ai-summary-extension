@@ -1,16 +1,14 @@
 // Background service worker for managing tabs and API calls
 import { SummaryCache } from './cache';
 import Portkey from 'portkey-ai';
+import {
+  callPortkeyAPI,
+  callPortkeyDirectAPI,
+  callPortkeyDirectLargeContextAPI
+} from './apis/portkey';
+import { callOpenRouterAPI, callOpenRouterChatAPI } from './apis/openrouter';
+import { callClaudeAPI, callClaudeChatAPI } from './apis/claude';
 
-// Custom fetch adapter for Chrome extension service worker context
-const customFetch = async (url: string, options: RequestInit): Promise<Response> => {
-  return fetch(url, {
-    ...options,
-    // Ensure we're using the global fetch properly
-    mode: 'cors',
-    credentials: 'omit'
-  });
-};
 
 // Test cache import immediately
 console.log('🧪 CACHE MODULE IMPORT TEST:', typeof SummaryCache);
@@ -27,6 +25,7 @@ interface TabInfo {
 interface LLMRequest {
   text: string;
   model: 'claude' | 'openai' | 'portkey';
+  modelIdentifier?: string;
   apiKey: string;
   apiUrl?: string;
   virtualKey?: string;
@@ -53,6 +52,7 @@ interface ChatRequest {
     content: string;
   }>;
   model: 'claude' | 'openai' | 'portkey';
+  modelIdentifier?: string;
   apiKey: string;
   apiUrl?: string;
   virtualKey?: string;
@@ -93,6 +93,10 @@ class BackgroundService {
   private static instance: BackgroundService;
   private pendingRequests = new Map<string, PendingRequest>();
   private cleanupInterval: any = null;
+  private conversationContexts = new Map<
+    string,
+    Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+  >();
 
   static getInstance(): BackgroundService {
     if (!this.instance) {
@@ -104,15 +108,40 @@ class BackgroundService {
 
   private startCleanupTimer() {
     // Clean up old requests every 5 minutes
-    this.cleanupInterval = setInterval(() => {
-      this.cleanupOldRequests();
-    }, 5 * 60 * 1000);
+    this.cleanupInterval = setInterval(
+      () => {
+        this.cleanupOldRequests();
+      },
+      5 * 60 * 1000
+    );
+  }
+
+  // Helper function to get the appropriate model identifier
+  private getModelIdentifier(
+    model: 'claude' | 'openai' | 'portkey',
+    modelIdentifier?: string
+  ): string {
+    if (modelIdentifier) {
+      return modelIdentifier;
+    }
+
+    // Default model identifiers for each provider
+    switch (model) {
+      case 'claude':
+        return 'claude-sonnet-4-20250514';
+      case 'openai':
+        return 'gpt-4';
+      case 'portkey':
+        return 'gpt-4'; // Default for Portkey, can be overridden by virtual key
+      default:
+        return 'gpt-4';
+    }
   }
 
   private cleanupOldRequests() {
     const now = Date.now();
     const maxAge = 30 * 60 * 1000; // 30 minutes
-    
+
     for (const [id, request] of this.pendingRequests) {
       if (now - request.timestamp > maxAge) {
         console.log('Cleaning up old request:', id);
@@ -141,33 +170,31 @@ class BackgroundService {
         target: { tabId },
         func: () => {
           // Extract text content from the page
-          const walker = document.createTreeWalker(
-            document.body,
-            NodeFilter.SHOW_TEXT,
-            {
-              acceptNode: (node) => {
-                const parent = node.parentElement;
-                if (!parent) return NodeFilter.FILTER_REJECT;
-
-                const style = window.getComputedStyle(parent);
-                if (style.display === 'none' || style.visibility === 'hidden') {
-                  return NodeFilter.FILTER_REJECT;
-                }
-
-                const ignoredTags = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'IFRAME']);
-                if (ignoredTags.has(parent.tagName)) {
-                  return NodeFilter.FILTER_REJECT;
-                }
-
-                return NodeFilter.FILTER_ACCEPT;
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+            acceptNode: node => {
+              const parent = node.parentElement;
+              if (!parent) {
+                return NodeFilter.FILTER_REJECT;
               }
+
+              const style = window.getComputedStyle(parent);
+              if (style.display === 'none' || style.visibility === 'hidden') {
+                return NodeFilter.FILTER_REJECT;
+              }
+
+              const ignoredTags = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'IFRAME']);
+              if (ignoredTags.has(parent.tagName)) {
+                return NodeFilter.FILTER_REJECT;
+              }
+
+              return NodeFilter.FILTER_ACCEPT;
             }
-          );
+          });
 
           const textNodes: string[] = [];
           let node;
 
-          while (node = walker.nextNode()) {
+          while ((node = walker.nextNode())) {
             const text = node.textContent?.trim();
             if (text && text.length > 0) {
               textNodes.push(text);
@@ -185,7 +212,10 @@ class BackgroundService {
     }
   }
 
-  async startLLMRequest(request: LLMRequest & { url?: string; forceFresh?: boolean }, requestId?: string): Promise<string> {
+  async startLLMRequest(
+    request: LLMRequest & { url?: string; forceFresh?: boolean },
+    requestId?: string
+  ): Promise<string> {
     const id = requestId || this.generateRequestId();
     const pendingRequest: PendingRequest = {
       id,
@@ -193,9 +223,9 @@ class BackgroundService {
       status: 'pending',
       timestamp: Date.now()
     };
-    
+
     this.pendingRequests.set(id, pendingRequest);
-    
+
     // Process request asynchronously
     this.processLLMRequest(id, request).catch(error => {
       console.error('LLM request processing failed:', error);
@@ -206,17 +236,22 @@ class BackgroundService {
         this.pendingRequests.set(id, req);
       }
     });
-    
+
     return id;
   }
 
-  async processLLMRequest(requestId: string, request: LLMRequest & { url?: string; forceFresh?: boolean }): Promise<void> {
+  async processLLMRequest(
+    requestId: string,
+    request: LLMRequest & { url?: string; forceFresh?: boolean }
+  ): Promise<void> {
     const pendingRequest = this.pendingRequests.get(requestId);
-    if (!pendingRequest) return;
-    
+    if (!pendingRequest) {
+      return;
+    }
+
     pendingRequest.status = 'processing';
     this.pendingRequests.set(requestId, pendingRequest);
-    
+
     try {
       const result = await this.callLLMAPI(request);
       pendingRequest.status = 'completed';
@@ -237,9 +272,19 @@ class BackgroundService {
     return `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
 
-  async callLLMAPI(request: LLMRequest & { url?: string; forceFresh?: boolean }): Promise<LLMResponse> {
+  async callLLMAPI(
+    request: LLMRequest & { url?: string; forceFresh?: boolean }
+  ): Promise<LLMResponse> {
     try {
-      const { text, model, apiKey, apiUrl, url, language = 'chinese', forceFresh = false } = request;
+      const {
+        text,
+        model,
+        apiKey,
+        apiUrl,
+        url,
+        language = 'chinese',
+        forceFresh = false
+      } = request;
 
       console.log('🔥🔥🔥 === CACHE DEBUG START === 🔥🔥🔥');
       console.log('LLM API called with:', { url, model, language, hasText: !!text, forceFresh });
@@ -253,7 +298,7 @@ class BackgroundService {
           console.log('🎯 CACHE HIT - Returning cached summary for:', `${url}|${language}`);
           // Get cache entry details for timestamp
           const cacheEntry = await this.getCacheEntry(url, language);
-          return { 
+          return {
             summary: cachedSummary,
             fromCache: true,
             cachedAt: cacheEntry?.timestamp
@@ -272,19 +317,45 @@ class BackgroundService {
 
       if (model === 'claude') {
         console.log('Using Anthropic Claude API');
-        apiResponse = await this.callClaudeAPI(text, apiKey, language, request.customPrompts);
+        apiResponse = await callClaudeAPI(
+          text,
+          apiKey,
+          language,
+          request.customPrompts,
+          request.modelIdentifier
+        );
       } else if (model === 'portkey') {
         console.log('Using Portkey API');
-        apiResponse = await this.callPortkeyAPI(text, apiKey, apiUrl, request.virtualKey, language, request.customPrompts);
+        apiResponse = await callPortkeyAPI(
+          text,
+          apiKey,
+          apiUrl,
+          request.virtualKey,
+          language,
+          request.customPrompts,
+          request.modelIdentifier
+        );
       } else {
         console.log('Using OpenRouter API');
-        apiResponse = await this.callOpenRouterAPI(text, model, apiKey, apiUrl, language, request.customPrompts);
+        apiResponse = await callOpenRouterAPI(
+          text,
+          model,
+          apiKey,
+          apiUrl,
+          language,
+          request.customPrompts,
+          request.modelIdentifier
+        );
       }
 
       // Cache the response if successful and URL is provided
       if (url && apiResponse.summary && !apiResponse.error) {
         console.log('💾💾💾 ABOUT TO STORE IN CACHE 💾💾💾');
-        console.log('💾 Storing in cache:', { url, language, responseLength: apiResponse.summary.length });
+        console.log('💾 Storing in cache:', {
+          url,
+          language,
+          responseLength: apiResponse.summary.length
+        });
         await SummaryCache.set(url, language, apiResponse.summary, model);
         console.log('✅ Successfully cached response for:', `${url}|${language}`);
       } else {
@@ -317,274 +388,13 @@ class BackgroundService {
     }
   }
 
-  private async callClaudeAPI(text: string, apiKey: string, language: 'chinese' | 'english' = 'chinese', customPrompts?: any): Promise<LLMResponse> {
-    const endpoint = 'https://api.anthropic.com/v1/messages';
-
-    // Get prompt configuration
-    const promptConfig = this.getPromptConfig(language, customPrompts);
-
-    try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'x-api-key': apiKey,
-          'Content-Type': 'application/json',
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true'
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: promptConfig.maxTokens,
-          system: promptConfig.systemPrompt,
-          messages: [
-            {
-              role: 'user',
-              content: this.createPrompt(text, language, customPrompts)
-            }
-          ]
-        })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        const errorDetails = errorData.error?.message || errorData.message || 'Unknown error';
-        const statusCode = response.status;
-        const statusText = response.statusText;
-
-        throw new Error(`Claude API request failed (${statusCode} ${statusText}): ${errorDetails}`);
-      }
-
-      const data = await response.json();
-      const summary = data.content?.[0]?.text || 'No summary generated';
-      return { summary };
-    } catch (error) {
-      if (error instanceof TypeError && error.message.includes('fetch')) {
-        throw new Error(`Network error: Unable to connect to Claude API. Check your internet connection.`);
-      }
-      throw error;
-    }
-  }
-
-  private async callOpenRouterAPI(text: string, model: 'claude' | 'openai', apiKey: string, apiUrl?: string, language: 'chinese' | 'english' = 'chinese', customPrompts?: any): Promise<LLMResponse> {
-    const endpoint = apiUrl || 'https://openrouter.ai/api/v1/chat/completions';
-
-    const modelMap = {
-      'claude': 'anthropic/claude-sonnet-4-20250514',
-      'openai': 'openai/gpt-4'
-    };
-
-    // Get prompt configuration
-    const promptConfig = this.getPromptConfig(language, customPrompts);
-
-    try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': chrome.runtime.getURL(''),
-          'X-Title': 'AI Page Summarizer'
-        },
-        body: JSON.stringify({
-          model: modelMap[model],
-          messages: [
-            {
-              role: 'system',
-              content: promptConfig.systemPrompt
-            },
-            {
-              role: 'user',
-              content: this.createPrompt(text, language, customPrompts)
-            }
-          ],
-          max_tokens: promptConfig.maxTokens,
-          temperature: promptConfig.temperature
-        })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        const errorDetails = errorData.error?.message || errorData.message || 'Unknown error';
-        const statusCode = response.status;
-        const statusText = response.statusText;
-
-        // Provide more specific error messages
-        let enhancedError = `API request failed (${statusCode} ${statusText}): ${errorDetails}`;
-
-        if (statusCode === 401) {
-          enhancedError += '\n\nTip: Check if your API key is valid and active.';
-        } else if (statusCode === 429) {
-          enhancedError += '\n\nTip: You have hit rate limits. Please wait before trying again.';
-        } else if (statusCode >= 500) {
-          enhancedError += '\n\nTip: This is a server error. The API service may be temporarily unavailable.';
-        }
-
-        throw new Error(enhancedError);
-      }
-
-      const data = await response.json();
-      const summary = data.choices?.[0]?.message?.content || 'No summary generated';
-      return { summary };
-    } catch (error) {
-      if (error instanceof TypeError && error.message.includes('fetch')) {
-        throw new Error(`Network error: Unable to connect to API endpoint. Check your internet connection and URL: ${endpoint}`);
-      }
-      throw error;
-    }
-  }
-
-  private async callPortkeyAPI(text: string, apiKey: string, apiUrl?: string, virtualKey?: string, language: 'chinese' | 'english' = 'chinese', customPrompts?: any): Promise<LLMResponse> {
-    try {
-      // Try SDK approach first
-      try {
-        const portkeyConfig: any = {
-          apiKey: apiKey
-        };
-
-        // Add virtual key if provided
-        if (virtualKey) {
-          portkeyConfig.virtualKey = virtualKey;
-        }
-
-        // Add custom base URL if provided
-        if (apiUrl) {
-          portkeyConfig.baseURL = apiUrl;
-        }
-
-        const portkey = new Portkey(portkeyConfig);
-
-        // Get prompt configuration
-        const promptConfig = this.getPromptConfig(language, customPrompts);
-
-        // Create chat completion using SDK
-        const response = await portkey.chat.completions.create({
-          messages: [
-            {
-              role: 'system',
-              content: promptConfig.systemPrompt
-            },
-            {
-              role: 'user',
-              content: this.createPrompt(text, language, customPrompts)
-            }
-          ],
-          model: 'gpt-4', // Default model, can be overridden by virtual key
-          max_tokens: promptConfig.maxTokens,
-          temperature: promptConfig.temperature
-        });
-
-        const summary = response.choices?.[0]?.message?.content?.toString() || 'No summary generated';
-        return { summary };
-      } catch (sdkError: any) {
-        // If SDK fails, fall back to direct API call
-        console.log('Portkey SDK failed, falling back to direct API call:', sdkError.message);
-        return await this.callPortkeyDirectAPI(text, apiKey, apiUrl, virtualKey, language, customPrompts);
-      }
-    } catch (error: any) {
-      // Handle SDK-specific errors
-      let errorMessage = 'Portkey API request failed';
-      
-      if (error?.status) {
-        const statusCode = error.status;
-        const errorDetails = error.message || error.error?.message || 'Unknown error';
-        
-        errorMessage = `Portkey API request failed (${statusCode}): ${errorDetails}`;
-
-        if (statusCode === 401) {
-          errorMessage += '\n\nTip: Check if your Portkey API key is valid and active.';
-        } else if (statusCode === 403) {
-          errorMessage += '\n\nTip: Check if your virtual key is valid and has the required permissions.';
-        } else if (statusCode === 429) {
-          errorMessage += '\n\nTip: You have hit rate limits. Please wait before trying again.';
-        } else if (statusCode >= 500) {
-          errorMessage += '\n\nTip: This is a server error. The Portkey service may be temporarily unavailable.';
-        }
-      } else if (error?.message) {
-        errorMessage += `: ${error.message}`;
-      }
-
-      throw new Error(errorMessage);
-    }
-  }
-
-  private async callPortkeyDirectAPI(text: string, apiKey: string, apiUrl?: string, virtualKey?: string, language: 'chinese' | 'english' = 'chinese', customPrompts?: any): Promise<LLMResponse> {
-    const endpoint = apiUrl || 'https://api.portkey.ai/v1/chat/completions';
-
-    try {
-      const headers: Record<string, string> = {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'X-Title': 'AI Page Summarizer'
-      };
-
-      // Add virtual key if provided
-      if (virtualKey) {
-        headers['x-portkey-virtual-key'] = virtualKey;
-      }
-
-      // Get prompt configuration
-      const promptConfig = this.getPromptConfig(language, customPrompts);
-
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          model: 'gpt-4', // Default model, can be overridden by virtual key
-          messages: [
-            {
-              role: 'system',
-              content: promptConfig.systemPrompt
-            },
-            {
-              role: 'user',
-              content: this.createPrompt(text, language, customPrompts)
-            }
-          ],
-          max_tokens: promptConfig.maxTokens,
-          temperature: promptConfig.temperature
-        })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        const errorDetails = errorData.error?.message || errorData.message || 'Unknown error';
-        const statusCode = response.status;
-        const statusText = response.statusText;
-
-        // Provide more specific error messages
-        let enhancedError = `Portkey API request failed (${statusCode} ${statusText}): ${errorDetails}`;
-
-        if (statusCode === 401) {
-          enhancedError += '\n\nTip: Check if your Portkey API key is valid and active.';
-        } else if (statusCode === 403) {
-          enhancedError += '\n\nTip: Check if your virtual key is valid and has the required permissions.';
-        } else if (statusCode === 429) {
-          enhancedError += '\n\nTip: You have hit rate limits. Please wait before trying again.';
-        } else if (statusCode >= 500) {
-          enhancedError += '\n\nTip: This is a server error. The Portkey service may be temporarily unavailable.';
-        }
-
-        throw new Error(enhancedError);
-      }
-
-      const data = await response.json();
-      const summary = data.choices?.[0]?.message?.content || 'No summary generated';
-      return { summary };
-    } catch (error) {
-      if (error instanceof TypeError && error.message.includes('fetch')) {
-        throw new Error(`Network error: Unable to connect to Portkey API endpoint. Check your internet connection and URL: ${endpoint}`);
-      }
-      throw error;
-    }
-  }
-
   async openDetachedWindow(): Promise<void> {
     try {
       // Check if detached popup window already exists
       const existingWindows = await chrome.windows.getAll({ populate: true });
-      const popupWindow = existingWindows.find(window =>
-        window.type === 'popup' &&
-        window.tabs?.some(tab => tab.url?.includes('popup.html'))
+      const popupWindow = existingWindows.find(
+        window =>
+          window.type === 'popup' && window.tabs?.some(tab => tab.url?.includes('popup.html'))
       );
 
       if (popupWindow) {
@@ -609,14 +419,18 @@ class BackgroundService {
   private getPromptConfig(language: 'chinese' | 'english', customPrompts?: any) {
     const defaultConfig = {
       chinese: {
-        systemPrompt: '你是一个有用的助手，专门总结网页内容。请提供简洁、结构清晰的摘要，突出主要观点和关键信息。',
-        userPrompt: '请为以下网页内容提供一个简洁、结构清晰的中文摘要，突出主要观点和关键信息：\n\n{text}',
+        systemPrompt:
+          '你是一个有用的助手，专门总结网页内容。请提供简洁、结构清晰的摘要，突出主要观点和关键信息。',
+        userPrompt:
+          '请为以下网页内容提供一个简洁、结构清晰的中文摘要，突出主要观点和关键信息：\n\n{text}',
         temperature: 0.5,
         maxTokens: 1000
       },
       english: {
-        systemPrompt: 'You are a helpful assistant that summarizes web page content. Provide a concise, well-structured summary highlighting the main points and key information.',
-        userPrompt: 'Please provide a concise, well-structured summary of this webpage content, highlighting the main points and key information:\n\n{text}',
+        systemPrompt:
+          'You are a helpful assistant that summarizes web page content. Provide a concise, well-structured summary highlighting the main points and key information.',
+        userPrompt:
+          'Please provide a concise, well-structured summary of this webpage content, highlighting the main points and key information:\n\n{text}',
         temperature: 0.5,
         maxTokens: 1000
       }
@@ -642,23 +456,86 @@ class BackgroundService {
     return await SummaryCache.clear();
   }
 
-  async callChatAPI(request: ChatRequest): Promise<LLMResponse> {
+  async callChatAPI(request: ChatRequest & { tabId?: number }): Promise<LLMResponse> {
     try {
-      const { messages, model, apiKey, apiUrl, virtualKey, language = 'chinese', customPrompts } = request;
+      const {
+        messages,
+        model,
+        apiKey,
+        apiUrl,
+        virtualKey,
+        language = 'chinese',
+        customPrompts,
+        tabId
+      } = request;
 
-      console.log('Chat API called with:', { model, language, messageCount: messages.length });
+      console.log('Chat API called with:', {
+        model,
+        language,
+        messageCount: messages.length,
+        tabId
+      });
+
+      // Store conversation context for this tab if provided
+      if (tabId !== undefined) {
+        this.conversationContexts.set(`tab_${tabId}`, messages);
+        console.log(
+          `Stored conversation context for tab ${tabId}, total messages: ${messages.length}`
+        );
+      }
 
       let apiResponse: LLMResponse;
 
       if (model === 'claude') {
         console.log('Using Anthropic Claude API for chat');
-        apiResponse = await this.callClaudeChatAPI(messages, apiKey, language, customPrompts);
+        apiResponse = await callClaudeChatAPI(
+          messages,
+          apiKey,
+          language,
+          customPrompts,
+          request.modelIdentifier
+        );
       } else if (model === 'portkey') {
-        console.log('Using Portkey API for chat');
-        apiResponse = await this.callPortkeyChatAPI(messages, apiKey, apiUrl, virtualKey, language, customPrompts);
+        console.log('Using Portkey Large Context API for chat');
+        // Check if we need extremely large context handling
+        const totalLength = messages.reduce((sum, msg) => sum + msg.content.length, 0);
+        const estimatedTokens = Math.ceil(totalLength / 4);
+
+        if (estimatedTokens > 100000) {
+          console.log(
+            `Detected extremely large context (~${estimatedTokens} tokens), using chunked processing`
+          );
+          apiResponse = await this.handleExtremelyLargeContext(
+            messages,
+            apiKey,
+            apiUrl,
+            virtualKey,
+            language,
+            customPrompts,
+            request.modelIdentifier
+          );
+        } else {
+          apiResponse = await this.callPortkeyLargeContextAPI(
+            messages,
+            apiKey,
+            apiUrl,
+            virtualKey,
+            language,
+            customPrompts,
+            request.modelIdentifier
+          );
+        }
       } else {
         console.log('Using OpenRouter API for chat');
-        apiResponse = await this.callOpenRouterChatAPI(messages, model, apiKey, apiUrl, language, customPrompts);
+        apiResponse = await callOpenRouterChatAPI(
+          messages,
+          model,
+          apiKey,
+          apiUrl,
+          language,
+          customPrompts,
+          request.modelIdentifier
+        );
       }
 
       return apiResponse;
@@ -671,117 +548,17 @@ class BackgroundService {
     }
   }
 
-  private async callClaudeChatAPI(messages: Array<{role: 'system' | 'user' | 'assistant'; content: string}>, apiKey: string, language: 'chinese' | 'english' = 'chinese', customPrompts?: any): Promise<LLMResponse> {
-    const endpoint = 'https://api.anthropic.com/v1/messages';
 
-    // Get prompt configuration for chat
-    const promptConfig = this.getPromptConfig(language, customPrompts);
-
-    // Separate system messages from user/assistant messages
-    const systemMessages = messages.filter(msg => msg.role === 'system');
-    const conversationMessages = messages.filter(msg => msg.role !== 'system');
-    
-    // Combine all system messages into one system prompt
-    const systemPrompt = systemMessages.length > 0 
-      ? systemMessages.map(msg => msg.content).join('\n\n')
-      : promptConfig.systemPrompt;
-
-    try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'x-api-key': apiKey,
-          'Content-Type': 'application/json',
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true'
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: promptConfig.maxTokens,
-          system: systemPrompt,
-          messages: conversationMessages
-        })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        const errorDetails = errorData.error?.message || errorData.message || 'Unknown error';
-        const statusCode = response.status;
-        const statusText = response.statusText;
-
-        throw new Error(`Claude API request failed (${statusCode} ${statusText}): ${errorDetails}`);
-      }
-
-      const data = await response.json();
-      const summary = data.content?.[0]?.text || 'No response generated';
-      return { summary };
-    } catch (error) {
-      if (error instanceof TypeError && error.message.includes('fetch')) {
-        throw new Error(`Network error: Unable to connect to Claude API. Check your internet connection.`);
-      }
-      throw error;
-    }
-  }
-
-  private async callOpenRouterChatAPI(messages: Array<{role: 'system' | 'user' | 'assistant'; content: string}>, model: 'claude' | 'openai', apiKey: string, apiUrl?: string, language: 'chinese' | 'english' = 'chinese', customPrompts?: any): Promise<LLMResponse> {
-    const endpoint = apiUrl || 'https://openrouter.ai/api/v1/chat/completions';
-
-    const modelMap = {
-      'claude': 'anthropic/claude-sonnet-4-20250514',
-      'openai': 'openai/gpt-4'
-    };
-
-    // Get prompt configuration for chat
-    const promptConfig = this.getPromptConfig(language, customPrompts);
-
-    try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': chrome.runtime.getURL(''),
-          'X-Title': 'AI Page Summarizer'
-        },
-        body: JSON.stringify({
-          model: modelMap[model],
-          messages: messages,
-          max_tokens: promptConfig.maxTokens,
-          temperature: promptConfig.temperature
-        })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        const errorDetails = errorData.error?.message || errorData.message || 'Unknown error';
-        const statusCode = response.status;
-        const statusText = response.statusText;
-
-        let enhancedError = `API request failed (${statusCode} ${statusText}): ${errorDetails}`;
-
-        if (statusCode === 401) {
-          enhancedError += '\n\nTip: Check if your API key is valid and active.';
-        } else if (statusCode === 429) {
-          enhancedError += '\n\nTip: You have hit rate limits. Please wait before trying again.';
-        } else if (statusCode >= 500) {
-          enhancedError += '\n\nTip: This is a server error. The API service may be temporarily unavailable.';
-        }
-
-        throw new Error(enhancedError);
-      }
-
-      const data = await response.json();
-      const summary = data.choices?.[0]?.message?.content || 'No response generated';
-      return { summary };
-    } catch (error) {
-      if (error instanceof TypeError && error.message.includes('fetch')) {
-        throw new Error(`Network error: Unable to connect to API endpoint. Check your internet connection and URL: ${endpoint}`);
-      }
-      throw error;
-    }
-  }
-
-  private async callPortkeyChatAPI(messages: Array<{role: 'system' | 'user' | 'assistant'; content: string}>, apiKey: string, apiUrl?: string, virtualKey?: string, language: 'chinese' | 'english' = 'chinese', customPrompts?: any): Promise<LLMResponse> {
+  // Add this new method for large context conversations
+  private async callPortkeyLargeContextAPI(
+    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+    apiKey: string,
+    apiUrl?: string,
+    virtualKey?: string,
+    language: 'chinese' | 'english' = 'chinese',
+    customPrompts?: any,
+    modelIdentifier?: string
+  ): Promise<LLMResponse> {
     try {
       // Try SDK approach first
       try {
@@ -789,56 +566,49 @@ class BackgroundService {
           apiKey: apiKey
         };
 
-        // Add virtual key if provided
         if (virtualKey) {
           portkeyConfig.virtualKey = virtualKey;
         }
 
-        // Add custom base URL if provided
         if (apiUrl) {
           portkeyConfig.baseURL = apiUrl;
         }
 
         const portkey = new Portkey(portkeyConfig);
 
-        // Get prompt configuration for chat
+        // Get prompt configuration
         const promptConfig = this.getPromptConfig(language, customPrompts);
 
-        // Create chat completion using SDK
+        // For large context, we need to manage token limits
+        // Most models have limits, so we'll implement smart truncation
+        const processedMessages = this.processLargeContext(messages, promptConfig.maxTokens);
+
         const response = await portkey.chat.completions.create({
-          messages: messages,
-          model: 'gpt-4', // Default model, can be overridden by virtual key
+          messages: processedMessages,
+          model: 'gpt-4', // or use virtual key to route to specific model
           max_tokens: promptConfig.maxTokens,
           temperature: promptConfig.temperature
         });
 
-        const summary = response.choices?.[0]?.message?.content?.toString() || 'No response generated';
+        const summary =
+          response.choices?.[0]?.message?.content?.toString() || 'No response generated';
         return { summary };
       } catch (sdkError: any) {
-        // If SDK fails, fall back to direct API call
         console.log('Portkey SDK failed, falling back to direct API call:', sdkError.message);
-        return await this.callPortkeyDirectChatAPI(messages, apiKey, apiUrl, virtualKey, language, customPrompts);
+        return await callPortkeyDirectLargeContextAPI(
+          messages,
+          apiKey,
+          apiUrl,
+          virtualKey,
+          language,
+          customPrompts,
+          modelIdentifier
+        );
       }
     } catch (error: any) {
-      // Handle SDK-specific errors
-      let errorMessage = 'Portkey API request failed';
-      
-      if (error?.status) {
-        const statusCode = error.status;
-        const errorDetails = error.message || error.error?.message || 'Unknown error';
-        
-        errorMessage = `Portkey API request failed (${statusCode}): ${errorDetails}`;
+      let errorMessage = 'Portkey large context API request failed';
 
-        if (statusCode === 401) {
-          errorMessage += '\n\nTip: Check if your Portkey API key is valid and active.';
-        } else if (statusCode === 403) {
-          errorMessage += '\n\nTip: Check if your virtual key is valid and has the required permissions.';
-        } else if (statusCode === 429) {
-          errorMessage += '\n\nTip: You have hit rate limits. Please wait before trying again.';
-        } else if (statusCode >= 500) {
-          errorMessage += '\n\nTip: This is a server error. The Portkey service may be temporarily unavailable.';
-        }
-      } else if (error?.message) {
+      if (error.message) {
         errorMessage += `: ${error.message}`;
       }
 
@@ -846,65 +616,210 @@ class BackgroundService {
     }
   }
 
-  private async callPortkeyDirectChatAPI(messages: Array<{role: 'system' | 'user' | 'assistant'; content: string}>, apiKey: string, apiUrl?: string, virtualKey?: string, language: 'chinese' | 'english' = 'chinese', customPrompts?: any): Promise<LLMResponse> {
-    const endpoint = apiUrl || 'https://api.portkey.ai/v1/chat/completions';
+  // Process large context by implementing smart truncation
+  private processLargeContext(
+    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+    maxTokens: number
+  ): Array<{ role: 'system' | 'user' | 'assistant'; content: string }> {
+    // Rough token estimation (4 characters per token)
+    const estimateTokens = (text: string): number => Math.ceil(text.length / 4);
 
-    try {
-      const headers: Record<string, string> = {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'X-Title': 'AI Page Summarizer'
-      };
+    // Calculate total tokens in current messages
+    let totalTokens = 0;
+    const processedMessages = [];
 
-      // Add virtual key if provided
-      if (virtualKey) {
-        headers['x-portkey-virtual-key'] = virtualKey;
-      }
-
-      // Get prompt configuration for chat
-      const promptConfig = this.getPromptConfig(language, customPrompts);
-
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          model: 'gpt-4', // Default model, can be overridden by virtual key
-          messages: messages,
-          max_tokens: promptConfig.maxTokens,
-          temperature: promptConfig.temperature
-        })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        const errorDetails = errorData.error?.message || errorData.message || 'Unknown error';
-        const statusCode = response.status;
-        const statusText = response.statusText;
-
-        let enhancedError = `Portkey API request failed (${statusCode} ${statusText}): ${errorDetails}`;
-
-        if (statusCode === 401) {
-          enhancedError += '\n\nTip: Check if your Portkey API key is valid and active.';
-        } else if (statusCode === 403) {
-          enhancedError += '\n\nTip: Check if your virtual key is valid and has the required permissions.';
-        } else if (statusCode === 429) {
-          enhancedError += '\n\nTip: You have hit rate limits. Please wait before trying again.';
-        } else if (statusCode >= 500) {
-          enhancedError += '\n\nTip: This is a server error. The Portkey service may be temporarily unavailable.';
-        }
-
-        throw new Error(enhancedError);
-      }
-
-      const data = await response.json();
-      const summary = data.choices?.[0]?.message?.content || 'No response generated';
-      return { summary };
-    } catch (error) {
-      if (error instanceof TypeError && error.message.includes('fetch')) {
-        throw new Error(`Network error: Unable to connect to Portkey API endpoint. Check your internet connection and URL: ${endpoint}`);
-      }
-      throw error;
+    // Always keep system message
+    if (messages.length > 0 && messages[0].role === 'system') {
+      processedMessages.push(messages[0]);
+      totalTokens += estimateTokens(messages[0].content);
     }
+
+    // Process remaining messages from newest to oldest (keep most recent)
+    const remainingMessages = messages.slice(1).reverse();
+
+    for (const message of remainingMessages) {
+      const messageTokens = estimateTokens(message.content);
+
+      // Reserve space for response (roughly 1/3 of max tokens)
+      const reservedTokens = Math.floor(maxTokens / 3);
+      const availableTokens = maxTokens - reservedTokens;
+
+      if (totalTokens + messageTokens <= availableTokens) {
+        processedMessages.unshift(message); // Add to beginning (maintain order)
+        totalTokens += messageTokens;
+      } else {
+        // If message is too long, truncate it
+        if (messageTokens > availableTokens - totalTokens) {
+          const availableChars = (availableTokens - totalTokens) * 4;
+          const truncatedContent = message.content.substring(0, availableChars) + '...';
+          processedMessages.unshift({
+            role: message.role,
+            content: truncatedContent
+          });
+          break;
+        }
+      }
+    }
+
+    return processedMessages;
+  }
+
+  // Handle extremely large contexts (1M+ tokens) with smart chunking
+  private async handleExtremelyLargeContext(
+    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+    apiKey: string,
+    apiUrl?: string,
+    virtualKey?: string,
+    language: 'chinese' | 'english' = 'chinese',
+    customPrompts?: any,
+    modelIdentifier?: string
+  ): Promise<LLMResponse> {
+    // If context is manageable, use regular large context API
+    const totalLength = messages.reduce((sum, msg) => sum + msg.content.length, 0);
+    const estimatedTokens = Math.ceil(totalLength / 4);
+
+    // If under 100K tokens, use regular processing
+    if (estimatedTokens < 100000) {
+      return await this.callPortkeyLargeContextAPI(
+        messages,
+        apiKey,
+        apiUrl,
+        virtualKey,
+        language,
+        customPrompts,
+        modelIdentifier
+      );
+    }
+
+    console.log(`Processing extremely large context: ~${estimatedTokens} tokens`);
+
+    // For extremely large contexts, implement smart chunking
+    const chunkedMessages = this.chunkLargeContext(messages);
+
+    // Process each chunk and maintain conversation flow
+    let processedContext = '';
+    let conversationSummary = '';
+
+    for (let i = 0; i < chunkedMessages.length; i++) {
+      const chunk = chunkedMessages[i];
+
+      // Create a summary of previous chunks if we have them
+      if (i > 0 && processedContext.length > 0) {
+        try {
+          const summaryResponse = await callPortkeyDirectAPI(
+            processedContext,
+            apiKey,
+            apiUrl,
+            virtualKey,
+            language,
+            customPrompts,
+            modelIdentifier
+          );
+          conversationSummary = summaryResponse.summary;
+        } catch (error) {
+          console.warn('Failed to create conversation summary:', error);
+        }
+      }
+
+      // Process current chunk
+      const chunkWithSummary = this.integrateSummaryWithChunk(chunk, conversationSummary, language);
+
+      try {
+        const response = await this.callPortkeyLargeContextAPI(
+          chunkWithSummary,
+          apiKey,
+          apiUrl,
+          virtualKey,
+          language,
+          customPrompts,
+          modelIdentifier
+        );
+
+        // Update processed context
+        processedContext += '\n\n' + chunk.map(msg => `${msg.role}: ${msg.content}`).join('\n');
+
+        // If this is the last chunk, return the response
+        if (i === chunkedMessages.length - 1) {
+          return response;
+        }
+      } catch (error) {
+        console.error(`Error processing chunk ${i}:`, error);
+        throw error;
+      }
+    }
+
+    throw new Error('Failed to process large context');
+  }
+
+  // Chunk large context into manageable pieces
+  private chunkLargeContext(
+    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+  ): Array<Array<{ role: 'system' | 'user' | 'assistant'; content: string }>> {
+    const maxChunkSize = 50000; // ~50K tokens per chunk
+    const chunks: Array<Array<{ role: 'system' | 'user' | 'assistant'; content: string }>> = [];
+    let currentChunk: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [];
+    let currentChunkSize = 0;
+
+    for (const message of messages) {
+      const messageSize = message.content.length;
+
+      // If adding this message would exceed chunk size, start a new chunk
+      if (currentChunkSize + messageSize > maxChunkSize && currentChunk.length > 0) {
+        chunks.push([...currentChunk]);
+        currentChunk = [];
+        currentChunkSize = 0;
+      }
+
+      // Add message to current chunk
+      currentChunk.push(message);
+      currentChunkSize += messageSize;
+    }
+
+    // Add the last chunk if it has content
+    if (currentChunk.length > 0) {
+      chunks.push(currentChunk);
+    }
+
+    return chunks;
+  }
+
+  // Integrate conversation summary with current chunk
+  private integrateSummaryWithChunk(
+    chunk: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+    summary: string,
+    language: 'chinese' | 'english'
+  ): Array<{ role: 'system' | 'user' | 'assistant'; content: string }> {
+    if (!summary) {
+      return chunk;
+    }
+
+    const summaryMessage = {
+      role: 'system' as const,
+      content:
+        language === 'chinese'
+          ? `之前的对话摘要：${summary}\n\n请基于这个摘要和当前对话继续回答。`
+          : `Previous conversation summary: ${summary}\n\nPlease continue the conversation based on this summary and the current dialogue.`
+    };
+
+    return [summaryMessage, ...chunk];
+  }
+
+  getConversationContext(
+    tabId: number
+  ): Array<{ role: 'system' | 'user' | 'assistant'; content: string }> | null {
+    const key = `tab_${tabId}`;
+    return this.conversationContexts.get(key) || null;
+  }
+
+  clearConversationContext(tabId: number): void {
+    const key = `tab_${tabId}`;
+    this.conversationContexts.delete(key);
+    console.log(`Cleared conversation context for tab ${tabId}`);
+  }
+
+  clearAllConversationContexts(): void {
+    this.conversationContexts.clear();
+    console.log('Cleared all conversation contexts');
   }
 }
 
@@ -923,13 +838,20 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 
     case 'startSummarize':
       // Start async summarization and return request ID immediately
-      console.log('Start summarize request received:', { url: request.url, hasData: !!request.data, forceFresh: request.forceFresh });
-      const dataWithUrl = { ...request.data, url: request.url, forceFresh: request.forceFresh };
-      service.startLLMRequest(dataWithUrl, request.requestId).then(requestId => {
-        sendResponse({ requestId });
-      }).catch(error => {
-        sendResponse({ error: error.message });
+      console.log('Start summarize request received:', {
+        url: request.url,
+        hasData: !!request.data,
+        forceFresh: request.forceFresh
       });
+      const dataWithUrl = { ...request.data, url: request.url, forceFresh: request.forceFresh };
+      service
+        .startLLMRequest(dataWithUrl, request.requestId)
+        .then(requestId => {
+          sendResponse({ requestId });
+        })
+        .catch(error => {
+          sendResponse({ error: error.message });
+        });
       return true;
 
     case 'getRequestStatus':
@@ -940,8 +862,16 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 
     case 'summarizeText':
       // Legacy synchronous method (kept for compatibility)
-      console.log('Summarize request received:', { url: request.url, hasData: !!request.data, forceFresh: request.forceFresh });
-      const legacyDataWithUrl = { ...request.data, url: request.url, forceFresh: request.forceFresh };
+      console.log('Summarize request received:', {
+        url: request.url,
+        hasData: !!request.data,
+        forceFresh: request.forceFresh
+      });
+      const legacyDataWithUrl = {
+        ...request.data,
+        url: request.url,
+        forceFresh: request.forceFresh
+      };
       service.callLLMAPI(legacyDataWithUrl).then(sendResponse);
       return true;
 
@@ -958,7 +888,21 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
       return true;
 
     case 'chatMessage':
-      service.callChatAPI(request.data).then(sendResponse);
+      // Include tab ID for context tracking
+      const chatRequest = { ...request.data, tabId: request.tabId };
+      service.callChatAPI(chatRequest).then(sendResponse);
+      return true;
+
+    case 'getConversationContext':
+      // Get stored conversation context for a tab
+      const context = service.getConversationContext(request.tabId);
+      sendResponse({ context });
+      return true;
+
+    case 'clearConversationContext':
+      // Clear conversation context for a tab
+      service.clearConversationContext(request.tabId);
+      sendResponse({ success: true });
       return true;
 
     default:

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "project": ["src/**/*.{ts,tsx}"],
+  "ignore": [
+    "dist/**",
+    "node_modules/**",
+    "**/*.min.js",
+    "webpack.config.js"
+  ],
+  "ignoreDependencies": [
+    "webpack-cli"
+  ],
+  "ignoreExportsUsedInFile": true,
+  "webpack": {
+    "config": "./webpack.config.js"
+  },
+  "typescript": {
+    "config": "./tsconfig.json"
+  }
+}

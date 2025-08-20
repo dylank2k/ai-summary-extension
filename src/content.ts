@@ -9,7 +9,12 @@ interface PageData {
 
 class PageTextExtractor {
   private static readonly IGNORED_TAGS = new Set([
-    'SCRIPT', 'STYLE', 'NOSCRIPT', 'IFRAME', 'OBJECT', 'EMBED'
+    'SCRIPT',
+    'STYLE',
+    'NOSCRIPT',
+    'IFRAME',
+    'OBJECT',
+    'EMBED'
   ]);
 
   static extractPageText(): PageData {
@@ -27,34 +32,32 @@ class PageTextExtractor {
   }
 
   private static getCleanTextContent(): string {
-    const walker = document.createTreeWalker(
-      document.body,
-      NodeFilter.SHOW_TEXT,
-      {
-        acceptNode: (node) => {
-          const parent = node.parentElement;
-          if (!parent) return NodeFilter.FILTER_REJECT;
-          
-          // Skip invisible elements
-          const style = window.getComputedStyle(parent);
-          if (style.display === 'none' || style.visibility === 'hidden') {
-            return NodeFilter.FILTER_REJECT;
-          }
-          
-          // Skip ignored tags
-          if (this.IGNORED_TAGS.has(parent.tagName)) {
-            return NodeFilter.FILTER_REJECT;
-          }
-          
-          return NodeFilter.FILTER_ACCEPT;
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode: node => {
+        const parent = node.parentElement;
+        if (!parent) {
+          return NodeFilter.FILTER_REJECT;
         }
+
+        // Skip invisible elements
+        const style = window.getComputedStyle(parent);
+        if (style.display === 'none' || style.visibility === 'hidden') {
+          return NodeFilter.FILTER_REJECT;
+        }
+
+        // Skip ignored tags
+        if (this.IGNORED_TAGS.has(parent.tagName)) {
+          return NodeFilter.FILTER_REJECT;
+        }
+
+        return NodeFilter.FILTER_ACCEPT;
       }
-    );
+    });
 
     const textNodes: string[] = [];
     let node;
-    
-    while (node = walker.nextNode()) {
+
+    while ((node = walker.nextNode())) {
       const text = node.textContent?.trim();
       if (text && text.length > 0) {
         textNodes.push(text);
@@ -72,7 +75,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       const pageData = PageTextExtractor.extractPageText();
       sendResponse({ success: true, data: pageData });
     } catch (error) {
-      sendResponse({ success: false, error: error instanceof Error ? error.message : String(error) });
+      sendResponse({
+        success: false,
+        error: error instanceof Error ? error.message : String(error)
+      });
     }
   }
   return true; // Keep message channel open for async response

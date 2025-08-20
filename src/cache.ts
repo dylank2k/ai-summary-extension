@@ -66,7 +66,7 @@ export class SummaryCache {
       // Check if cache entry has expired
       const { cacheExpiryDays } = await this.getSettings();
       const now = Date.now();
-      const expiryTime = entry.timestamp + (cacheExpiryDays * 24 * 60 * 60 * 1000);
+      const expiryTime = entry.timestamp + cacheExpiryDays * 24 * 60 * 60 * 1000;
 
       if (now > expiryTime) {
         // Entry expired, remove it
@@ -92,7 +92,7 @@ export class SummaryCache {
     try {
       const cacheKey = this.createCacheKey(url, language);
       const result = await chrome.storage.local.get([this.STORAGE_KEY]);
-      let cache: CacheStorage = result[this.STORAGE_KEY] || {};
+      const cache: CacheStorage = result[this.STORAGE_KEY] || {};
 
       // Add new entry
       cache[cacheKey] = {
@@ -158,13 +158,19 @@ export class SummaryCache {
    * Get cache statistics
    * @returns Object with cache size and other stats
    */
-  static async getStats(): Promise<{ 
-    size: number; 
+  static async getStats(): Promise<{
+    size: number;
     totalBytes: number;
     totalSizeFormatted: string;
-    oldestEntry?: string; 
+    oldestEntry?: string;
     newestEntry?: string;
-    entries: Array<{url: string; language: string; timestamp: string; model: string; sizeBytes: number}>;
+    entries: Array<{
+      url: string;
+      language: string;
+      timestamp: string;
+      model: string;
+      sizeBytes: number;
+    }>;
   }> {
     try {
       const result = await chrome.storage.local.get([this.STORAGE_KEY]);
@@ -174,8 +180,8 @@ export class SummaryCache {
       const size = entries.length;
 
       if (size === 0) {
-        return { 
-          size: 0, 
+        return {
+          size: 0,
           totalBytes: 0,
           totalSizeFormatted: '0 B',
           entries: []
@@ -203,18 +209,18 @@ export class SummaryCache {
       const oldestEntry = new Date(entries[0].timestamp).toLocaleString();
       const newestEntry = new Date(entries[entries.length - 1].timestamp).toLocaleString();
 
-      return { 
-        size, 
+      return {
+        size,
         totalBytes,
         totalSizeFormatted,
-        oldestEntry, 
+        oldestEntry,
         newestEntry,
         entries: entryDetails
       };
     } catch (error) {
       console.error('Error getting cache stats:', error);
-      return { 
-        size: 0, 
+      return {
+        size: 0,
         totalBytes: 0,
         totalSizeFormatted: '0 B',
         entries: []
@@ -228,12 +234,14 @@ export class SummaryCache {
    * @returns Formatted string (e.g., "1.2 KB", "3.4 MB")
    */
   private static formatBytes(bytes: number): string {
-    if (bytes === 0) return '0 B';
-    
+    if (bytes === 0) {
+      return '0 B';
+    }
+
     const k = 1024;
     const sizes = ['B', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    
+
     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
   }
 

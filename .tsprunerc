@@ -1,0 +1,8 @@
+{
+  "ignore": [
+    "dist/**/*",
+    "node_modules/**/*",
+    "**/*.min.js",
+    "webpack.config.js"
+  ]
+}
