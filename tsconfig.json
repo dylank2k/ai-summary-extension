@@ -12,6 +12,9 @@
     "rootDir": "./src",
     "jsx": "react-jsx",
     "allowSyntheticDefaultImports": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
     "types": ["chrome"]
   },
   "include": ["src/**/*"],

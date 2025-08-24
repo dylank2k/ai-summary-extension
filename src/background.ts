@@ -10,11 +10,6 @@ import { callOpenRouterAPI, callOpenRouterChatAPI } from './apis/openrouter';
 import { callClaudeAPI, callClaudeChatAPI } from './apis/claude';
 
 
-// Test cache import immediately
-console.log('🧪 CACHE MODULE IMPORT TEST:', typeof SummaryCache);
-console.log('🧪 CACHE HAS GET METHOD:', typeof SummaryCache.get);
-console.log('🧪 CACHE HAS SET METHOD:', typeof SummaryCache.set);
-
 interface TabInfo {
   id: number;
   url: string;
@@ -114,28 +109,6 @@ class BackgroundService {
       },
       5 * 60 * 1000
     );
-  }
-
-  // Helper function to get the appropriate model identifier
-  private getModelIdentifier(
-    model: 'claude' | 'openai' | 'portkey',
-    modelIdentifier?: string
-  ): string {
-    if (modelIdentifier) {
-      return modelIdentifier;
-    }
-
-    // Default model identifiers for each provider
-    switch (model) {
-      case 'claude':
-        return 'claude-sonnet-4-20250514';
-      case 'openai':
-        return 'gpt-4';
-      case 'portkey':
-        return 'gpt-4'; // Default for Portkey, can be overridden by virtual key
-      default:
-        return 'gpt-4';
-    }
   }
 
   private cleanupOldRequests() {
@@ -441,11 +414,6 @@ class BackgroundService {
     }
 
     return defaultConfig[language];
-  }
-
-  private createPrompt(text: string, language: 'chinese' | 'english', customPrompts?: any): string {
-    const promptConfig = this.getPromptConfig(language, customPrompts);
-    return promptConfig.userPrompt.replace('{text}', text);
   }
 
   async getCacheStats() {
