@@ -69,7 +69,7 @@ class PageTextExtractor {
 }
 
 // Listen for messages from popup/background
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   if (request.action === 'extractText') {
     try {
       const pageData = PageTextExtractor.extractPageText();

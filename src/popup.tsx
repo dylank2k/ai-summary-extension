@@ -92,6 +92,7 @@ const Popup: React.FC = () => {
 
       return () => clearTimeout(timer);
     }
+    return undefined;
   }, [currentTab, settings.apiKey]);
 
   const loadSettings = async () => {
@@ -400,14 +401,6 @@ const Popup: React.FC = () => {
     }
   };
 
-  const openDetachedWindow = async () => {
-    try {
-      await chrome.runtime.sendMessage({ action: 'openDetachedWindow' });
-      window.close();
-    } catch (error) {
-      console.error('Error opening detached window:', error);
-    }
-  };
 
   const focusTab = async (tabId: number) => {
     try {
@@ -724,13 +717,6 @@ const Popup: React.FC = () => {
                     title="Refresh current tab"
                   >
                     ⟳
-                  </button>
-                  <button
-                    onClick={openDetachedWindow}
-                    className="p-1.5 text-blue-500 hover:text-blue-700 border border-blue-300 rounded text-xs"
-                    title="Open in detached window"
-                  >
-                    ↗
                   </button>
                 </div>
               </div>
