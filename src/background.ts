@@ -8,14 +8,10 @@ import {
 } from './apis/portkey';
 import { callOpenRouterAPI, callOpenRouterChatAPI } from './apis/openrouter';
 import { callClaudeAPI, callClaudeChatAPI } from './apis/claude';
+import { getAllTabsInfo, extractTextFromTab } from './tab';
 
 
-interface TabInfo {
-  id: number;
-  url: string;
-  title: string;
-  text?: string;
-}
+
 
 interface LLMRequest {
   text: string;
@@ -87,7 +83,6 @@ interface PendingRequest {
 class BackgroundService {
   private static instance: BackgroundService;
   private pendingRequests = new Map<string, PendingRequest>();
-  private cleanupInterval: any = null;
   private conversationContexts = new Map<
     string,
     Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
@@ -103,13 +98,14 @@ class BackgroundService {
 
   private startCleanupTimer() {
     // Clean up old requests every 5 minutes
-    this.cleanupInterval = setInterval(
+    setInterval(
       () => {
         this.cleanupOldRequests();
       },
       5 * 60 * 1000
     );
   }
+
 
   private cleanupOldRequests() {
     const now = Date.now();
@@ -123,67 +119,7 @@ class BackgroundService {
     }
   }
 
-  async getAllTabsInfo(): Promise<TabInfo[]> {
-    try {
-      const tabs = await chrome.tabs.query({});
-      return tabs.map(tab => ({
-        id: tab.id!,
-        url: tab.url || '',
-        title: tab.title || 'Untitled'
-      }));
-    } catch (error) {
-      console.error('Error getting tabs info:', error);
-      return [];
-    }
-  }
 
-  async extractTextFromTab(tabId: number): Promise<string> {
-    try {
-      const results = await chrome.scripting.executeScript({
-        target: { tabId },
-        func: () => {
-          // Extract text content from the page
-          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
-            acceptNode: node => {
-              const parent = node.parentElement;
-              if (!parent) {
-                return NodeFilter.FILTER_REJECT;
-              }
-
-              const style = window.getComputedStyle(parent);
-              if (style.display === 'none' || style.visibility === 'hidden') {
-                return NodeFilter.FILTER_REJECT;
-              }
-
-              const ignoredTags = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'IFRAME']);
-              if (ignoredTags.has(parent.tagName)) {
-                return NodeFilter.FILTER_REJECT;
-              }
-
-              return NodeFilter.FILTER_ACCEPT;
-            }
-          });
-
-          const textNodes: string[] = [];
-          let node;
-
-          while ((node = walker.nextNode())) {
-            const text = node.textContent?.trim();
-            if (text && text.length > 0) {
-              textNodes.push(text);
-            }
-          }
-
-          return textNodes.join(' ').replace(/\s+/g, ' ').trim();
-        }
-      });
-
-      return results[0]?.result || '';
-    } catch (error) {
-      console.error('Error extracting text from tab:', error);
-      return '';
-    }
-  }
 
   async startLLMRequest(
     request: LLMRequest & { url?: string; forceFresh?: boolean },
@@ -361,33 +297,6 @@ class BackgroundService {
     }
   }
 
-  async openDetachedWindow(): Promise<void> {
-    try {
-      // Check if detached popup window already exists
-      const existingWindows = await chrome.windows.getAll({ populate: true });
-      const popupWindow = existingWindows.find(
-        window =>
-          window.type === 'popup' && window.tabs?.some(tab => tab.url?.includes('popup.html'))
-      );
-
-      if (popupWindow) {
-        // Focus existing popup window
-        await chrome.windows.update(popupWindow.id!, { focused: true });
-      } else {
-        // Create new popup window
-        await chrome.windows.create({
-          url: chrome.runtime.getURL('popup.html'),
-          type: 'popup',
-          width: 400,
-          height: 500,
-          focused: true
-        });
-      }
-    } catch (error) {
-      console.error('Error creating detached popup window:', error);
-      throw error;
-    }
-  }
 
   private getPromptConfig(language: 'chinese' | 'english', customPrompts?: any) {
     const defaultConfig = {
@@ -797,11 +706,11 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 
   switch (request.action) {
     case 'getAllTabs':
-      service.getAllTabsInfo().then(sendResponse);
+      getAllTabsInfo().then(sendResponse);
       return true;
 
     case 'extractTabText':
-      service.extractTextFromTab(request.tabId).then(sendResponse);
+      extractTextFromTab(request.tabId).then(sendResponse);
       return true;
 
     case 'startSummarize':
@@ -843,9 +752,6 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
       service.callLLMAPI(legacyDataWithUrl).then(sendResponse);
       return true;
 
-    case 'openDetachedWindow':
-      service.openDetachedWindow().then(sendResponse);
-      return true;
 
     case 'getCacheStats':
       service.getCacheStats().then(sendResponse);
@@ -875,6 +781,7 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 
     default:
       sendResponse({ error: 'Unknown action' });
+      return true;
   }
 });
 
